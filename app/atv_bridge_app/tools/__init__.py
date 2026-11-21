@@ -526,10 +526,11 @@ class Tools:
         async with self.stage.lock:
             if still and not still():
                 return None
-            if end:
-                self.presentation_end = end
-            else:
+            if not end:
                 self.take_over()
             await getattr(self, "presenter", self.sender).stop()
             await self.stage.hide()
+            if end:
+                # A dismissal records the end once the page is gone.
+                self.presentation_end = end
         return success("hidden", ["Sender stopped"])
