@@ -116,6 +116,8 @@ A person can use the Siri Remote on a mirrored page. When `tv_show` omits `remot
 
 For example, `tv_show {"html":"<h1>Pick one</h1>"}` uses `tvos`, and `tv_show {"url":"https://example.org/","remote":"off"}` sends no presses. The mode is set when the page shows, and a page that navigates keeps it.
 
+Upgrade note: remote input was off by default before. Pass `remote: "off"` to keep the old behavior.
+
 Write pages for `tvos` with these layout rules:
 
 - Use body text of 29 px or larger on the 1920×1080 canvas.
