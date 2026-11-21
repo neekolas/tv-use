@@ -151,7 +151,7 @@ What each remote action becomes:
 | Touch-surface Siri Remote | Click anywhere on the surface | `Enter` | Verified on tvOS 26.6.1 |
 | Touch-surface Siri Remote | Tap without a click | Nothing | By design, as in tvOS |
 | `tv_remote` and `tv_sequence` keys | left, right, up, down, select | Arrows and `Enter` | Verified on tvOS 26.6.1 |
-| Any remote | Menu, Home | Not forwarded. tvOS ends the mirror, and the bridge dismisses the page. | Menu and TV presses read on tvOS 27.2. The dismissal is not yet tested on hardware. |
+| Any remote | Menu, Home | Not forwarded. tvOS ends the mirror, and the bridge dismisses the page. | Menu and TV presses read on tvOS 27.2. Dismissal verified on tvOS 27.2 with Menu and Home sent by `tv_remote`. |
 | Any remote | Play/Pause, volume | Not forwarded | |
 
 A click during a touch sends only the key of the click, never an extra arrow. The swipe and flick tuning is preliminary.
