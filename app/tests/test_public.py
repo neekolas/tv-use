@@ -431,11 +431,14 @@ async def test_live_page_frame_fallback_and_return(
     assert [args.args[0] for args in mirror.start.await_args_list] == (
         [STAGE_URL, url] if top_level else [STAGE_URL]
     )
+    # A live site gets focus by default, framed or at the top level.
+    assert r["data"]["remote"]["mode"] == service.stage.page["remote"] == "focus"
     mirror.confirm_frame.return_value = False
     r = await call("tv_show", {"files": {"index.html": "<h1>Next</h1>", "img.png": "base64:aGk="}})
     assert (
         r["ok"] and not r["verified"] and r["screen"]["presenting"]["page_id"] == r["data"]["page_id"]
     )
+    assert r["data"]["remote"]["mode"] == service.stage.page["remote"] == "tvos"
     assert service.stage.store.file(r["data"]["page_id"], "img.png").read_bytes() == b"hi"
     assert mirror.start.await_args.args == (STAGE_URL,) and service.stage.direct_browser is None
     assert (await call("tv_show", {}))["screen"]["presenting"] is None
