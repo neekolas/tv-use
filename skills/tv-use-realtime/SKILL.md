@@ -55,6 +55,7 @@ Local connection, from a Mac at home:
 - **Recorded mode:** `tv_show` returned `data.transport: "video"`. The page cannot change; show the final page instead.
 - **A native app is on screen:** there is no page. Let the app show the result and check it with `tv_look`.
 - **The user left the page:** `screen.presenting` is null and `screen.last_presentation_end.reason` is `ended_on_tv`. Back or Home on the remote, or the TV itself, ended it. Do not show it again unless the user asks.
+- **Your own key ended the page:** the reason is `ended_by_tool`. Your `tv_remote` or `tv_sequence` sent Menu or Home. The user did not leave; show the page again if you still need it.
 - **`mirror_busy`:** ask before `replace: true`.
 - **A call fails:** read `error.fix` and try it once, silently. If it fails again, say so in one sentence.
 

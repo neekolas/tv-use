@@ -271,7 +271,10 @@ Clickpad remote: ring clicks are arrows and the center click is Enter (verified)
 Touch-surface remote: swipes are arrows, one per step of finger travel, a brisk swipe or a flick adds up to four more,
 and any click is Enter (clicks verified, swipe tuning preliminary).
 Menu and Home stay with tvOS and end the mirror. The bridge then dismisses the page and does not show it
-again, and later results report screen.last_presentation_end. Play/Pause and volume are not forwarded."""
+again, and later results report screen.last_presentation_end. That always works when the TV closes the
+video connection. When it closes only the control connection, the bridge must see the press, which needs
+screen.presenting.remote.state "active". Otherwise the page can return about a second later.
+Play/Pause and volume are not forwarded."""
 RETRYABLE = {"tv_unreachable", "page_unreachable", "screen_unavailable", "busy"}
 CODES = {
     "wake_failed": "tv_unreachable",

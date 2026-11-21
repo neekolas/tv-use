@@ -23,7 +23,7 @@ Single-TV operations other than `tv_status` and `tv_history` include `screen`. O
 | `playing` | `title`, `state`, `position_s`, `duration_s` |
 | `presenting` | `page_id`, `title`, `url`, and `remote` when the page was shown with remote input |
 
-When the TV ended the last page itself, for example after Back or Home on the remote, `screen` also has `last_presentation_end` with `reason` (`ended_on_tv`), `at` and `page_id`. The next `tv_show`, or a call that takes over the presentation, removes it.
+When the TV ended the last page itself, `screen` also has `last_presentation_end` with `reason`, `at` and `page_id`. The `reason` is `ended_by_tool` when the end came within 3 seconds after `tv_remote` or `tv_sequence` sent Menu or Home. Otherwise it is `ended_on_tv`: Back or Home on the remote, or the TV itself, ended the page. A later page from `tv_show`, `tv_show {}`, or a call that takes over the presentation removes it. Those calls are `tv_play`, `tv_open`, `tv_power`, and another room's `replace: true`.
 
 Pairing uses an unknown screen snapshot. On failure the screen may be stale or unknown. Aggregate look returns top-level `screen: null`. A routing failure can have `screen.tv: null` with no `tv_id`.
 
@@ -121,6 +121,8 @@ A show returns `data.page_id`, `data.size` and `data.transport`. A mirror report
 
 Back (Menu) or Home on the remote ends a mirrored page, and the bridge does not show it again. It stops the mirror and the remote watch. Later results report `screen.presenting: null` and `screen.last_presentation_end`, and `tv_page_run` returns `nothing_showing`. The same happens when the TV ends the mirror for another reason. A mirror that fails, for example after a network loss or a sender crash, restarts. A recording (`data.transport: "video"`) still reopens when the TV closes its AirPlay session.
 
+The dismissal is reliable when the TV closes the AirPlay video connection. Sometimes the TV closes only the control connection first. Then the bridge dismisses the page only while remote input is active (`screen.presenting.remote.state` is `"active"`), because it must see the press. Remote input is not active with `remote: "off"`, without a screen pairing, or while the watch is still `"starting"` right after `tv_show`. In those cases the sender reconnects, and the page can return about a second later.
+
 #### Remote input
 
 `remote` lets a person use the Siri Remote on a mirrored page. When `remote` is omitted, it is `tvos` for `html`, `files` and `bundle` pages, and `focus` for `url` pages.
@@ -202,7 +204,7 @@ To tune swipes, read the app log at the `info` level. For each finger contact th
 Limits:
 
 - Presses that the bridge sends with `tv_remote` or `tv_sequence` during the page are forwarded too.
-- With `remote: "off"` the bridge cannot see Menu or Home. If the TV then closes only the AirPlay control connection, the sender reconnects and the page can return about a second later.
+- The bridge sees Menu and Home only while remote input is active. With `remote: "off"`, without a screen pairing, or while the state is still `"starting"`, a page can return about a second later if the TV closes only the AirPlay control connection.
 - Long presses are not tested.
 
 ### tv_page_run
