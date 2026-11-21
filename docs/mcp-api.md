@@ -146,12 +146,12 @@ The helper's timings and scales are in `window.__tvRemoteConfig`. They are preli
 
 Use `focus`, not `tvos`, for a page you did not write: a scale on an unknown layout can be clipped or can cover a neighbor. This is why a `url` page defaults to `focus`.
 
-The show result has `data.remote` with the `mode` in effect, also when the call omitted `remote`, plus `state` and, when unavailable, `reason`. With `remote: "off"`, the result has no `data.remote`. The show succeeds even when remote input cannot start. `screen.presenting.remote` reports the current values in every later result:
+The show result has `data.remote` with the `mode` in effect, also when the call omitted `remote`, plus `state` and, when unavailable, `reason`. With `remote: "off"`, the result has no `data.remote`. The show does not wait for remote input to start, so `state` is often `starting`. It is `active` at once when an earlier page left the watch running. A watch that cannot start reports `unavailable` in later results; only `not_mirrored` shows at once. The show succeeds even when remote input cannot start. `screen.presenting.remote` reports the current values in every later result, such as `tv_look`:
 
 | Field | Contents |
 |---|---|
 | `mode` | `focus` or `tvos` |
-| `state` | `active`, `starting` (the observer process is starting or restarting the watch) or `unavailable` |
+| `state` | `active`, `starting` (the watch is starting or restarting, which a show does not wait for) or `unavailable` |
 | `reason` | Why the state is `unavailable`. See the table below. |
 | `presses` | Number of presses received for this page |
 | `last` | `key` (`left`, `right`, `up`, `down` or `select`) and `at` (UTC time) of the last press, or null |

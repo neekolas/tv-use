@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock
 
 import httpx2
 import pytest
+from aiohttp import web
 from jsonschema import Draft202012Validator
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
@@ -1139,8 +1140,10 @@ async def test_show_picks_the_remote_mode_by_page_type(remote, source, mode):
     shown = present_as(service, "mirror")
     result = await service.tools.call("tv_show", source)
     # The result reports the mode in effect, also when the caller did not ask for one.
-    assert shown == [mode] and result["ok"] and result["data"]["remote"] == {"mode": mode, "state": "active"}
-    assert result["screen"]["presenting"]["remote"]["mode"] == mode and observer.count("buttons_start") == 1
+    assert shown == [mode] and result["ok"] and result["data"]["remote"] == {"mode": mode, "state": "starting"}
+    assert result["screen"]["presenting"]["remote"]["mode"] == mode
+    await until(lambda: control.state == "active")
+    assert observer.count("buttons_start") == 1
 
 
 async def test_show_reports_remote_input(remote):
@@ -1148,11 +1151,13 @@ async def test_show_reports_remote_input(remote):
     shown = present_as(service, "mirror")
     call = service.tools.call
     result = await call("tv_show", {"html": "<h1>x</h1>"})
-    assert result["ok"] and result["data"]["remote"] == {"mode": "tvos", "state": "active"}
+    # The show does not wait for the watch. Later results report its state.
+    assert result["ok"] and result["data"]["remote"] == {"mode": "tvos", "state": "starting"}
+    await until(lambda: control.state == "active")
     observer.emit({"event": "button", "key": "select", "received": time.time()})
     screen = (await call("tv_look", {}))["screen"]
     live = screen["presenting"]["remote"]
-    assert live["presses"] == 1 and live["last"]["key"] == "select" and live["last"]["at"]
+    assert live["state"] == "active" and live["presses"] == 1 and live["last"]["key"] == "select" and live["last"]["at"]
 
     # off sends no input. Its result has no remote fields, as before.
     result = await call("tv_show", {"html": "<h1>x</h1>", "remote": "off"})
@@ -1161,7 +1166,9 @@ async def test_show_reports_remote_input(remote):
 
     # An explicit mode wins over the default for the page type.
     result = await call("tv_show", {"html": "<h1>x</h1>", "remote": "focus"})
-    assert result["data"]["remote"] == {"mode": "focus", "state": "active"}
+    assert result["data"]["remote"] == {"mode": "focus", "state": "starting"}
+    await until(lambda: control.state == "active")
+    # The next pages find the watch running.
     result = await call("tv_show", {"url": "https://example.org/", "remote": "tvos"})
     assert result["data"]["remote"] == {"mode": "tvos", "state": "active"}
     # Earlier callers sent "keys". It is an alias of focus.
@@ -1191,20 +1198,16 @@ async def test_show_succeeds_when_remote_input_cannot_start(remote, case, reason
         observer.reply = {"event": "buttons", "state": "unavailable", "reason": reason}
     result = await service.tools.call("tv_show", {"html": "<h1>x</h1>"})
     assert result["ok"] and result["verified"]
-    assert result["data"]["remote"] == {"mode": "tvos", "state": "unavailable", "reason": reason}
-    assert result["screen"]["presenting"]["remote"]["reason"] == reason
     if case == "video":
+        # A recording never gets keys. The show says so at once.
+        assert result["data"]["remote"] == {"mode": "tvos", "state": "unavailable", "reason": reason}
         assert observer.calls.count("buttons_start") == 0
-
-
-async def test_show_does_not_wait_long_for_a_slow_watch(remote, monkeypatch):
-    service, observer, control = remote
-    present_as(service, "mirror")
-    observer.reply = None
-    settle = control.settle
-    monkeypatch.setattr(control, "settle", lambda: settle(0.05))
-    result = await service.tools.call("tv_show", {"html": "<h1>x</h1>"})
-    assert result["ok"] and result["data"]["remote"] == {"mode": "tvos", "state": "starting"}
+    else:
+        # The watch starts after the show returns. Later results report why it cannot run.
+        assert result["data"]["remote"] == {"mode": "tvos", "state": "starting"}
+        await until(lambda: control.state == "unavailable")
+    remote = (await service.tools.call("tv_look", {}))["screen"]["presenting"]["remote"]
+    assert (remote["state"], remote["reason"]) == ("unavailable", reason)
 
 
 async def test_video_only_bridge_never_starts_the_watch(remote):
@@ -2091,3 +2094,149 @@ async def test_with_nothing_focused_the_first_arrow_lands_on_the_autofocus_item(
     tvos.control.mode = mode
     assert await tvos.press("right") == "b1"  # Not a0, the first item on screen.
     assert await tvos.press("up") == "a1"
+
+
+# --- Show latency ----------------------------------------------------------
+
+CDP_DELAY_S = 0.5  # One CDP round trip on a busy host.
+WATCH_DELAY_S = 3  # How long a slow TV takes to accept the log stream.
+
+
+def slow_frame(frame, delay=CDP_DELAY_S):
+    """A real frame on which every CDP round trip takes `delay` longer."""
+
+    async def later(call, *args):
+        await asyncio.sleep(delay)
+        return await call(*args)
+
+    async def new_cdp_session(_page):
+        session = await later(frame.page.context.new_cdp_session, frame.page)
+        return SimpleNamespace(send=lambda *args: later(session.send, *args))
+
+    page = SimpleNamespace(evaluate=lambda *args: later(frame.page.evaluate, *args),
+                           context=SimpleNamespace(new_cdp_session=new_cdp_session))
+    return SimpleNamespace(page=page, url=frame.url, evaluate=lambda *args: later(frame.evaluate, *args))
+
+
+@pytest.mark.parametrize("browser_frame,path", [(AUTOFOCUS_CONTENT, "stage"), (AUTOFOCUS_CONTENT, "top_level")],
+                         indirect=["browser_frame"])
+async def test_show_does_not_wait_for_remote_input(remote, browser_frame, aiohttp_server, path):
+    """Review finding: tv_show waited up to 3 s for the first key setup and up to 3 s for the watch to start.
+
+    A warm page change on a Home Assistant Green took 2.6 to 2.8 s. Both now run after the show returns.
+    Here the TV takes 3 s to accept the log stream, and each CDP round trip takes 500 ms.
+    """
+    service, observer, control = remote
+    # The real observer answers buttons_start at once. It reports the watch when the TV accepts the stream.
+    observer.reply = None
+    plain = observer.call
+
+    async def call(method, **params):
+        if method == "buttons_start":
+            asyncio.get_running_loop().call_later(WATCH_DELAY_S, observer.emit, {"event": "buttons", "state": "active"})
+        return await plain(method, **params)
+
+    observer.call = call
+    # The stage shows a page in its frame. A page that refuses a frame shows at the top level.
+    direct = path == "top_level"
+    content = browser_frame.page.main_frame if direct else browser_frame
+    frame = slow_frame(content)
+
+    async def binding():
+        await asyncio.sleep(CDP_DELAY_S)  # The bridge finds the frame over CDP.
+        return frame, frame.url, direct
+
+    control.interaction.binding = binding
+
+    async def site(request):
+        return web.Response(text="<h1>Live</h1>", headers={"X-Frame-Options": "DENY"}, content_type="text/html")
+
+    app = web.Application()
+    app.router.add_get("/", site)
+    server = await aiohttp_server(app)
+    service.stage.stage_ports.add(server.port)
+    mirror = service.operations.live_mirror
+    mirror.start, mirror.verify_document = AsyncMock(), AsyncMock()
+    mirror.confirm_frame = AsyncMock(return_value=True)
+    source, mode = ({"url": str(server.make_url("/"))}, "focus") if direct else ({"html": "<h1>x</h1>"}, "tvos")
+
+    async def show(**args):
+        started = time.monotonic()
+        result = await service.tools.call("tv_show", source | args)
+        assert result["ok"] and service.stage.direct_browser is (mirror if direct else None)
+        return result, time.monotonic() - started
+
+    async def look():
+        return (await service.tools.call("tv_look", {}))["screen"]["presenting"]["remote"]
+
+    await show(remote="off")  # The first show also stores the page.
+    _, off = await show(remote="off")
+    first, on = await show()
+    early = await look()
+    # The key setup still runs, after the show. Without a press, the page's autofocus item shows focus.
+    done = "window.__tvRemoteFocus" + ("" if direct else " && document.activeElement.id === 'b1'")
+    async with asyncio.timeout(5):
+        while not await content.evaluate(f"Boolean({done})"):
+            await asyncio.sleep(0.05)
+    await until(lambda: control.state == "active", timeout=WATCH_DELAY_S + 1)
+    later = await look()
+    # The next page finds the watch running.
+    change, changed = await show()
+    timings = f"{path}: off {off * 1000:.0f} ms, first show {on * 1000:.0f} ms, page change {changed * 1000:.0f} ms"
+    print(timings)
+    assert first["data"]["remote"] == {"mode": mode, "state": "starting"} and early["state"] == "starting"
+    assert later["state"] == "active" and change["data"]["remote"] == {"mode": mode, "state": "active"}
+    assert on - off < 0.1 and changed - off < 0.1 and on < CDP_DELAY_S, timings
+    # The focus helper marks itself with true, the tvos helper with its name.
+    assert await content.evaluate("window.__tvRemoteFocus") == (True if direct else "tvos")
+
+
+async def presses_arrived(frame, count):
+    async with asyncio.timeout(2):
+        while await frame.evaluate("window.__tvRemote?.count ?? 0") < count:
+            await asyncio.sleep(0.01)
+
+
+async def test_a_press_before_the_key_setup_still_gets_the_helper(remote, browser_frame, monkeypatch):
+    """The show returns before its key setup runs. A press that comes first prepares the page itself."""
+    service, observer, control = remote
+    present_as(service, "mirror")
+    frame = browser_frame
+    control.interaction.binding = AsyncMock(return_value=(frame, frame.url, False))
+    held, prime = asyncio.Event(), control.prime
+
+    async def late_prime():
+        await held.wait()
+        await prime()
+
+    monkeypatch.setattr(control, "prime", late_prime)
+    result = await service.tools.call("tv_show", {"html": "<h1>x</h1>"})
+    assert result["data"]["remote"] == {"mode": "tvos", "state": "starting"}
+    assert await frame.evaluate("window.__tvRemoteFocus ?? null") is None
+    observer.emit({"event": "button", "key": "right", "received": time.time()})
+    await presses_arrived(frame, 1)
+    assert await frame.evaluate("[document.activeElement.id, window.__tvRemoteFocus]") == ["a", "tvos"]
+    # The setup that runs after it leaves the focus alone.
+    held.set()
+    await control.priming
+    assert await frame.evaluate("[document.activeElement.id, window.__tvRemote.count]") == ["a", 1]
+
+
+async def test_the_key_setup_and_a_press_at_once_share_one_cdp_session(remote, browser_frame):
+    service, observer, control = remote
+    present_as(service, "mirror")
+    frame = browser_frame
+    made = []
+
+    async def new_cdp_session(_page):
+        made.append(_page)
+        return await frame.page.context.new_cdp_session(frame.page)
+
+    page = SimpleNamespace(evaluate=frame.page.evaluate, context=SimpleNamespace(new_cdp_session=new_cdp_session))
+    proxy = SimpleNamespace(page=page, evaluate=frame.evaluate, url=frame.url)
+    control.interaction.binding = AsyncMock(return_value=(proxy, frame.url, False))
+    await service.tools.call("tv_show", {"html": "<h1>x</h1>"})
+    observer.emit({"event": "button", "key": "right", "received": time.time()})
+    await presses_arrived(frame, 1)
+    await control.priming
+    assert len(made) == 1 and await frame.evaluate("document.activeElement.id") == "a" and control.missed == 0

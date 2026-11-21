@@ -16,7 +16,8 @@ Example: `tv_show {"bundle":"<pick-one ID>","audio":"mute"}` uses `tvos`. `tv_sh
 
 ## Check it
 
-- `data.remote.mode` is the mode in effect. `data.remote.state` is `"active"` when presses arrive. With `"off"`, there is no `data.remote`.
+- `data.remote.mode` is the mode in effect. With `"off"`, there is no `data.remote`.
+- `tv_show` doesn't wait for the watch to start, so `data.remote.state` is often `"starting"`. Read the current state in `screen.presenting.remote` of a later call, such as `tv_look`. `"active"` means presses arrive.
 - `"unavailable"` comes with a `reason`: `screen_not_paired` → `tv_pair {"kind":"screen"}`; `not_mirrored` → the page is a recording and gets no input. The page shows either way.
 - Presses are counted in `screen.presenting.remote` and `window.__tvRemote`.
 - What the person did in a reference app: `tv_page_run {"script":"tv.state().input"}` gives `count`, `last` (`{n, action, detail, at}`) and the five most recent actions. Each app's header lists the actions it reports.

@@ -868,7 +868,7 @@ class PublicTools:
         """Present a page, or dismiss it by omitting the source. Can wake the TV and replaces its bridge media or page.
         The HA host renders the page and mirrors it or plays a recording. Live URLs use a mirror. The default fleet limit is one active mirror.
         Inspect data.transport and screen.presenting. verified means frames were sent or playback was observed. Use tv_page_run to read or change a live page.
-        Siri Remote arrows and Select reach a mirrored page by default: remote is "tvos" for html, files and bundle, and "focus" for url. Lay out a "tvos" page in rows and grids. Set remote to "off" to send no input. Check data.remote and screen.presenting.remote.
+        Siri Remote arrows and Select reach a mirrored page by default: remote is "tvos" for html, files and bundle, and "focus" for url. Lay out a "tvos" page in rows and grids. Set remote to "off" to send no input. data.remote.state is often "starting"; later results report it in screen.presenting.remote.
         For example, tv_show {"html":"<h1>Hello</h1>"}."""
         await self.media.stop()
         if all(source is None for source in (url, html, files, bundle)):
@@ -889,9 +889,11 @@ class PublicTools:
         mode = result["mode"]
         data = {}
         if remote != "off":
+            # Remote input must not delay the show. The key setup and the watch start run in the background,
+            # and later results report the state in screen.presenting.remote.
             if mode == "mirror":
-                await self.remote_input.prime()
-            status = await self.remote_input.settle()
+                self.remote_input.prime_soon()
+            status = self.remote_input.status()
             data["remote"] = {k: status[k] for k in ("mode", "state", "reason") if k in status}
         return outcome(
             "The bridge is presenting the page."

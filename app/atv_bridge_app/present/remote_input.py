@@ -392,11 +392,12 @@ class RemoteInput:
         self.subscribed = False
         self.tasks = []
         self.wake = asyncio.Event()
-        self.changed = asyncio.Event()
         self.queue = asyncio.Queue()
+        self.priming = None  # The prime task of the current page.
         self.touch_logged = deque()
         self.touch_skipped = 0
         self.cdp = None  # (page, CDP session) for key events.
+        self.cdp_lock = asyncio.Lock()
         self.awake = None  # (frame, press log state, time) after a key that left the document ready for the next one.
         self.timing = {}  # Seconds that each step of the last send took.
         ops.stage.on_change = self.sync
@@ -424,6 +425,9 @@ class RemoteInput:
         if revision != self.revision:
             # A top-level page keeps its frame object across shows, so the frame alone does not tell a new page.
             self.revision, self.presses, self.last, self.awake = revision, 0, None, None
+            # A prime that is still running belongs to the page before.
+            if self.priming:
+                self.priming.cancel()
         self.mode = mode
         if mode == "off":
             self._set("off")
@@ -448,7 +452,6 @@ class RemoteInput:
 
     def _set(self, state, reason=None):
         self.state, self.reason = state, reason
-        self.changed.set()
 
     def _retry(self):
         asyncio.get_running_loop().call_later(self.delay, self.wake.set)
@@ -564,9 +567,11 @@ class RemoteInput:
 
     async def session(self, page):
         """Return the CDP session that carries key events to a page. One is made for each page."""
-        if not self.cdp or self.cdp[0] is not page:
-            self.cdp = (page, await page.context.new_cdp_session(page))
-        return self.cdp[1]
+        # Prime runs beside the first key. The lock keeps them from making two sessions.
+        async with self.cdp_lock:
+            if not self.cdp or self.cdp[0] is not page:
+                self.cdp = (page, await page.context.new_cdp_session(page))
+            return self.cdp[1]
 
     async def prepare(self):
         """Give the current content document keyboard focus and, in focus and tvos mode, the helper.
@@ -626,6 +631,13 @@ class RemoteInput:
             self.awake = (frame, after, done)
         return arrived
 
+    def prime_soon(self):
+        """Prime in the background. tv_show must not wait for it: on a busy host each CDP round trip is slow.
+
+        A press that comes first prepares the page itself in send.
+        """
+        self.priming = asyncio.create_task(self.prime())
+
     async def prime(self):
         """Find the content document at show time, so the first press is not slow.
 
@@ -641,15 +653,6 @@ class RemoteInput:
                 # shows no ring or lift until the first press. Empty text sends the page no event.
                 await session.send("Input.insertText", {"text": ""})
 
-    async def settle(self, timeout=3):
-        """Give the watch a short time to report its first state."""
-        with suppress(TimeoutError):
-            async with asyncio.timeout(timeout):
-                while self.wanted() and self.state == "starting":
-                    self.changed.clear()
-                    await self.changed.wait()
-        return self.status()
-
     def status(self):
         if self.mode == "off":
             return None
@@ -663,7 +666,8 @@ class RemoteInput:
         return result
 
     async def close(self):
-        tasks, self.tasks = self.tasks, []
+        tasks = [task for task in (*self.tasks, self.priming) if task]
+        self.tasks, self.priming = [], None
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
