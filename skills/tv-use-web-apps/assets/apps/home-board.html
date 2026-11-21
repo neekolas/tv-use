@@ -67,7 +67,7 @@
        "The garage is open"            -> {"set_status":{"label":"Garage","value":"Open","alert":true}}
        "It's late, dim the board"      -> {"dim":true}           "Brighten it"  -> {"dim":false}
 
-     Remote: show the board with "remote":"tvos". At rest nothing has focus and the board looks as it does without a
+     Remote: tv_show uses "remote":"tvos" by default. At rest nothing has focus and the board looks as it does without a
      remote. The first arrow press focuses the first note, or else the alert. Up and Down move through the notes;
      Down from the notes, or Right along the home row, reaches Dim. 30 s after the last press, focus leaves again.
      Each action runs the patch below and keeps the section's age, then calls tv.input. Read it with tv.state().input.

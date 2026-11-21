@@ -47,7 +47,7 @@
        "Next question"                    -> {question:N}, where N = state.question + 1, up to state.of
        "This last one is double points"   -> {question:N, double:true}, where N = state.of
 
-     Remote (tv_show {..., "remote":"tvos"}). Each control applies the patch shown, like a voice turn, then calls
+     Remote (tv_show uses "remote":"tvos" by default). Each control applies the patch shown, like a voice turn, then calls
      tv.input(action, detail). Read what the person did with tv.state().input.
        Lobby       Start            {view:"question"}                          -> "start" {question}
        Question    player token     {answering:"leo"}                          -> "answering" {player}

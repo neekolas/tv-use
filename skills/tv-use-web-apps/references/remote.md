@@ -1,23 +1,22 @@
 # Let someone use the Siri Remote on a page
 
-Use this when a person at the TV should move through or pick things on a page you show. Add `remote` to `tv_show`:
+Use this when a person at the TV should move through or pick things on a page you show. `tv_show` turns the Siri Remote on by default. Set `remote` only to change the mode:
 
-| `remote` | For | Effect |
+| `remote` | Default for | Effect |
 |---|---|---|
-| `"tvos"` | Pages you write, including every reference app | tvOS-style focus: the focused tile lifts with a ring, arrows move straight up, down, left or right by geometry, side menus are reachable and scrollbars are hidden. Enter activates. Follow the layout rules in [app-contract.md](app-contract.md#remote-input). |
-| `"focus"` | Pages you didn't write | A plain focus ring. Arrows move to the nearest link or control; Enter activates it. |
-| `"keys"` | Pages that handle `keydown` themselves | Trusted `ArrowLeft`, `ArrowRight`, `ArrowUp`, `ArrowDown` and `Enter` events. |
-| `"off"` (default) | | Presses aren't forwarded. |
+| `"tvos"` | `html`, `files` and `bundle`: pages you write, including every reference app | tvOS-style focus: the focused tile lifts with a ring, arrows move straight up, down, left or right by geometry, side menus are reachable and scrollbars are hidden. Enter activates. Follow the layout rules in [app-contract.md](app-contract.md#remote-input). |
+| `"focus"` | `url`: pages you didn't write | A plain focus ring. Arrows move to the nearest link or control; Enter activates it. |
+| `"off"` | | Presses aren't forwarded. |
 
-A page's `preventDefault()` keeps control of a key in every mode.
+Both modes send trusted `ArrowLeft`, `ArrowRight`, `ArrowUp`, `ArrowDown` and `Enter` events. A page that handles a key and calls `preventDefault()` keeps control of it.
 
 Also pass `audio: "mute"` unless the page plays sound. On a Home Assistant Green that saves about one CPU core and sends about 9 frames per second instead of 7.
 
-Example: `tv_show {"bundle":"<pick-one ID>","remote":"tvos","audio":"mute"}`
+Example: `tv_show {"bundle":"<pick-one ID>","audio":"mute"}` uses `tvos`. `tv_show {"url":"https://example.org/","remote":"off"}` sends no presses.
 
 ## Check it
 
-- `data.remote.state` is `"active"` when presses arrive.
+- `data.remote.mode` is the mode in effect. `data.remote.state` is `"active"` when presses arrive. With `"off"`, there is no `data.remote`.
 - `"unavailable"` comes with a `reason`: `screen_not_paired` → `tv_pair {"kind":"screen"}`; `not_mirrored` → the page is a recording and gets no input. The page shows either way.
 - Presses are counted in `screen.presenting.remote` and `window.__tvRemote`.
 - What the person did in a reference app: `tv_page_run {"script":"tv.state().input"}` gives `count`, `last` (`{n, action, detail, at}`) and the five most recent actions. Each app's header lists the actions it reports.

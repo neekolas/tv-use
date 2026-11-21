@@ -82,7 +82,7 @@ Each returns `{working, pending}`.
 
 ## Remote input
 
-Every app works with the Siri Remote as well as by voice. Show it with `tv_show {..., "remote": "tvos"}` (see [remote.md](remote.md)).
+Every app works with the Siri Remote as well as by voice. `tv_show` shows a page you write with `remote: "tvos"` by default (see [remote.md](remote.md)).
 
 - Make every action a person can take a real `<button>`, or an element with `tabindex="0"`, that `click` handles. Enter activates it. Nothing is hover-only.
 - Lay focusable items out in rows and grids. Wrap each row in an element with `data-tv-group`. Leave about 8% spare room around each one, because the focused item grows 6%; no `overflow: hidden` on its parent.

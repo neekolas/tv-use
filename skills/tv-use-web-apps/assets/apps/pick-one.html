@@ -42,7 +42,7 @@
     "Sort them by rating"           {"sort": "score"}
     "Let's do number 5"             {"chosen": 5}
 
-  Siri Remote, with tv_show {..., "remote": "tvos"}. Each control runs the patch shown, as a voice turn
+  Siri Remote, in tv_show's default "remote": "tvos". Each control runs the patch shown, as a voice turn
   would, then calls tv.input(action, detail). Read it with tv.state().input. n is the number on screen.
     Arrow onto a poster       {"focus": n}        tv.input("focus", {item: n, id})
     Select on a poster        {"item": n}         tv.input("open", {item: n, id})

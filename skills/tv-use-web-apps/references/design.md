@@ -26,7 +26,7 @@ How the bridge renders and mirrors a page, and what that means for type, motion,
 ## Audio and reading aloud
 
 - Page audio (`<audio>`, Web Audio) plays on the TV. The bridge browser allows autoplay, so a page can start audio without a click.
-- Pass `audio: "mute"` to `tv_show` for a silent page.
+- Pass `audio: "mute"` to `tv_show` for a silent page. The mirror then uses about one CPU core less on a Home Assistant Green and sends about 9 fps instead of 7 at 1080p.
 - To read text aloud, generate the speech audio yourself with any text-to-speech you have. Ship the clips in `files` or a bundle, or serve them from your live server. Play a clip from the page, for example when the caller invokes your playback function.
 - Keep one clip per step or paragraph, so your playback function can jump to any of them.
 

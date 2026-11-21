@@ -111,7 +111,7 @@ Supply one source to present, or just the room selector (or `{}` with a default)
 | `{"bundle":"<bundle ID>"}` | The ID from a ZIP upload |
 | `{"url":"https://example.org/"}` | A live HTTP or HTTPS page reachable from the HA host |
 
-Optional fields are `title`, `audio` (`play` by default, or `mute`), `keep_awake` (defaults to true and requests a browser wake lock) and `replace` (defaults to false). The default mirror capacity is one. If `mirror_busy` names other rooms in `data.holders`, `replace: true` can stop the oldest holder before starting the new presentation.
+Optional fields are `title`, `audio` (`play` by default, or `mute`), `remote` (see [Remote input](#remote-input)), `keep_awake` (defaults to true and requests a browser wake lock) and `replace` (defaults to false). Use `audio: "mute"` for every page that plays no sound. On a Home Assistant Green the mirror then uses about one CPU core less and sends about 9 fps instead of 7 at 1080p. The default mirror capacity is one. If `mirror_busy` names other rooms in `data.holders`, `replace: true` can stop the oldest holder before starting the new presentation.
 
 The bridge checks the resolved address before connecting, including after redirects. Public sites, reachable tailnet sites and the bridge’s active stage origins work by default. A blocked URL returns `blocked_address` with the address class and a fix. Operators can grant additional LAN destinations with `page_network_allow`.
 
@@ -119,16 +119,15 @@ A show returns `data.page_id`, `data.size` and `data.transport`. A mirror report
 
 #### Remote input
 
-`remote` lets a person use the Siri Remote on a mirrored page. It is `off` by default.
+`remote` lets a person use the Siri Remote on a mirrored page. When `remote` is omitted, it is `tvos` for `html`, `files` and `bundle` pages, and `focus` for `url` pages.
 
 | Value | Effect |
 |---|---|
 | `off` | The page gets no remote presses. |
-| `keys` | Left, Right, Up, Down and Select reach the page as trusted `keydown` and `keyup` events with the keys `ArrowLeft`, `ArrowRight`, `ArrowUp`, `ArrowDown` and `Enter`. The events go to the focused element of the content document. |
+| `focus` | Left, Right, Up, Down and Select reach the page as trusted `keydown` and `keyup` events with the keys `ArrowLeft`, `ArrowRight`, `ArrowUp`, `ArrowDown` and `Enter`. The events go to the focused element of the content document. A focus helper in the content document also moves focus: an arrow moves it to the nearest link or control in that direction and a focus ring shows the focused element. Select activates it. When nothing lies in that direction, the page scrolls. The helper skips a key that the page already handled with `preventDefault()`, so a page that handles its own keys keeps control. |
 | `tvos` | `focus` with a tvOS look, for pages you write. The focused item lifts (scale 1.06, or 1.03 for an item wider than half the screen), gets a shadow and a white ring, and shrinks for a moment on Select. Left and right first look straight ahead of the focused item. They take the nearest column there and, in it, the item that lines up best with the focused one. Up and down take the next row on screen, also when nothing of it lies straight ahead because it is short or offset. In it, they take the item that lines up best with the focused one, or else the nearest one. A tile that its row has scrolled out of view counts only when no other tile of the row does. Up and down go by the positions on screen, so they also go straight between rows that are scrolled differently. A row does not remember its last focused item. A run of quick arrows, as after a flick, shows only the ring on the items it passes. A row scrolls at once, without a glide. Scrollbars are hidden. |
-| `focus` | The same key events, plus a focus helper in the content document. An arrow moves focus to the nearest link or control in that direction and a focus ring shows the focused element. Select activates it. When nothing lies in that direction, the page scrolls. The helper skips a key that the page already handled with `preventDefault()`. |
 
-For example, `tv_show {"html":"<button onclick=\"next()\">Next</button>","remote":"focus"}`.
+For example, `tv_show {"html":"<button onclick=\"next()\">Next</button>"}` uses `tvos`, and `tv_show {"url":"https://example.org/","remote":"off"}` sends no presses. An explicit value wins over the default. The mode is set when the page shows. A page that navigates keeps its mode, and the helper returns in the new document at the next press.
 
 Chromium blocks `autofocus` in the stage's frame. In `focus` and `tvos`, the bridge applies it when the page shows: it focuses the first focusable `autofocus` element, unless the page has focused an element itself. The focused element shows its focus before the first press, and the first arrow moves from it, as on tvOS. An arrow with nothing focused goes to the `autofocus` element, or else to the first item on screen.
 
@@ -145,13 +144,13 @@ Write pages for `tvos` with these layout rules:
 
 The helper's timings and scales are in `window.__tvRemoteConfig`. They are preliminary. A page can set any of them in `window.__tvRemoteConfig` before the helper starts, and the helper keeps them over its defaults. A later change to a field applies at once. The defaults suit a mirror of about 10 frames per second: most of the lift shows in the first frame, Select holds the pressed look for 300 ms, and arrows less than 250 ms apart count as a run. `scrollBehavior` is `instant`. Set it to `smooth` only at a higher frame rate.
 
-Use `focus`, not `tvos`, for a page you did not write: a scale on an unknown layout can be clipped or can cover a neighbor.
+Use `focus`, not `tvos`, for a page you did not write: a scale on an unknown layout can be clipped or can cover a neighbor. This is why a `url` page defaults to `focus`.
 
-The show result has `data.remote` with `mode`, `state` and, when unavailable, `reason`. The show succeeds even when remote input cannot start. `screen.presenting.remote` reports the current values in every later result:
+The show result has `data.remote` with the `mode` in effect, also when the call omitted `remote`, plus `state` and, when unavailable, `reason`. With `remote: "off"`, the result has no `data.remote`. The show succeeds even when remote input cannot start. `screen.presenting.remote` reports the current values in every later result:
 
 | Field | Contents |
 |---|---|
-| `mode` | `keys`, `focus` or `tvos` |
+| `mode` | `focus` or `tvos` |
 | `state` | `active`, `starting` (the observer process is starting or restarting the watch) or `unavailable` |
 | `reason` | Why the state is `unavailable`. See the table below. |
 | `presses` | Number of presses received for this page |

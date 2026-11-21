@@ -25,7 +25,7 @@ All of them follow [app-contract.md](references/app-contract.md): `app.apply(pat
 ## Show and update
 
 1. Upload once: `scripts/upload-bundle.sh assets/apps/<app>.html` prints a bundle ID (needs `HA_URL`, `HA_TOKEN`). Without a shell, send the file as `tv_show {"html":"..."}`.
-2. Show it before the data is ready: `tv_show {"tv":"<room>","bundle":"<id>","remote":"tvos","audio":"mute"}`. It starts in its pending layout, and the Siri Remote works on it. Leave out `audio` only for pages that play sound.
+2. Show it before the data is ready: `tv_show {"tv":"<room>","bundle":"<id>","audio":"mute"}`. It starts in its pending layout, and the Siri Remote works on it in `tvos` mode. Leave out `audio` only for pages that play sound: mute saves about one CPU core on a Home Assistant Green and sends more frames.
 3. Patch it: `tv_page_run {"tv":"<room>","script":"app.apply(arg); return tv.working('…')","arg":{...}}`. One script per change; the bridge refuses a second within 0.25 s.
 4. `tv.done()` when finished. `tv_show {"tv":"<room>"}` hides it.
 

@@ -104,18 +104,17 @@ A host without a port grants every TCP port on that host. Use brackets for an IP
 
 Expose an application function for the caller, for example `window.setStep = n => document.querySelector('h1').textContent = 'Step ' + n`. Invoke it with `tv_page_run {"script":"window.setStep(arg)","arg":2}`.
 
-Use the 1920×1080 canvas and body text of at least 28 px. Audio plays by default. Set `audio` to `mute` for any page that plays no sound. On a Home Assistant Green, a mirror with audio uses about one more CPU core. A muted 1080p page renders about 40% more frames, and the encoder takes about 80 ms per frame instead of 120 ms. `keep_awake` defaults to true and requests a browser screen wake lock. Dismiss the page with `tv_show {}`. The `tv_hide` alias is accepted but omitted from `tools/list`. For a specific room use `tv_show {"tv":"<room>"}`.
+Use the 1920×1080 canvas and body text of at least 28 px. Audio plays by default. Set `audio` to `mute` for any page that plays no sound. It makes the mirror faster. On a Home Assistant Green, a mirror with audio uses about one more CPU core. A muted 1080p page renders about 40% more frames, and the encoder takes about 80 ms per frame instead of 120 ms. `keep_awake` defaults to true and requests a browser screen wake lock. Dismiss the page with `tv_show {}`. The `tv_hide` alias is accepted but omitted from `tools/list`. For a specific room use `tv_show {"tv":"<room>"}`.
 
 ### Remote input on a page
 
-Pass `remote` to `tv_show` to let a person use the Siri Remote on a mirrored page. The default is `off`.
+A person can use the Siri Remote on a mirrored page. When `tv_show` omits `remote`, it is `tvos` for `html`, `files` and `bundle` pages, and `focus` for `url` pages.
 
-- `remote: "keys"` sends Left, Right, Up, Down and Select to the page as the keys `ArrowLeft`, `ArrowRight`, `ArrowUp`, `ArrowDown` and `Enter`. Use it for a page that handles `keydown` itself.
-- `remote: "focus"` also adds a focus helper. Arrows move focus between links and controls, a focus ring shows the focused element, and Select activates it. Use it for ordinary pages. The helper skips a key that the page handled with `preventDefault()`.
+- `remote: "focus"` sends Left, Right, Up, Down and Select to the page as the keys `ArrowLeft`, `ArrowRight`, `ArrowUp`, `ArrowDown` and `Enter`, and adds a focus helper. Arrows move focus between links and controls, a focus ring shows the focused element, and Select activates it. The helper skips a key that the page handled with `preventDefault()`, so a page that handles its own keys keeps control.
+- `remote: "tvos"` is `focus` with a tvOS look. The focused item lifts with a shadow and a white ring, Up and Down go to the next row on screen and take the item straight above or below, or else the nearest one, a row scrolls at once without a glide, and scrollbars are hidden. Use it for pages you write for the TV. Use `focus` for other pages, where a scaled item could be clipped or cover a neighbor.
+- `remote: "off"` sends no presses.
 
-- `remote: "tvos"` is `focus` with a tvOS look. The focused item lifts with a shadow and a white ring, Up and Down go to the next row on screen and take the item straight above or below, or else the nearest one, a row scrolls at once without a glide, and scrollbars are hidden. Use it for pages you write for the TV. Use `focus` for other pages, where a scaled item could be clipped.
-
-For example, `tv_show {"url":"https://example.org/","remote":"focus"}`.
+For example, `tv_show {"html":"<h1>Pick one</h1>"}` uses `tvos`, and `tv_show {"url":"https://example.org/","remote":"off"}` sends no presses. The mode is set when the page shows, and a page that navigates keeps it.
 
 Write pages for `tvos` with these layout rules:
 
@@ -130,7 +129,7 @@ Write pages for `tvos` with these layout rules:
 
 The helper's timings and scales are in `window.__tvRemoteConfig`. They are preliminary and suit a mirror of about 10 frames per second. A page can set any of them in `window.__tvRemoteConfig` before the helper starts, and the helper keeps them over its defaults. A later change to a field applies at once.
 
-The show result reports `data.remote` with `mode`, `state` and `reason`. The page still shows when remote input cannot start. Later results report `screen.presenting.remote` with `state`, the number of `presses` and the `last` key with its time.
+The show result reports `data.remote` with the `mode` in effect, `state` and `reason`. It has no `data.remote` with `remote: "off"`. The page still shows when remote input cannot start. Later results report `screen.presenting.remote` with `state`, the number of `presses` and the `last` key with its time.
 
 Remote input needs screen pairing. The observer reads presses from the TV's log on its existing connection while such a page is shown. It stops when the page is dismissed or replaced. If the connection to the TV drops, the bridge reports `state: "unavailable"` with a `reason` such as `stream_failed` or `tv_unreachable`, and retries until the state is `active` again. If the observer process restarts, the state is `starting` until the watch runs again. A recorded presentation (`data.transport` equal to `"video"`) cannot receive keys and reports `reason: "not_mirrored"`. The watch also stops when a mirror fails or falls back to a recording. [All reason values](../docs/mcp-api.md#remote-input)
 

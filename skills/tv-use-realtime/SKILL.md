@@ -27,7 +27,7 @@ The user talks and watches the TV. You act, and the screen answers.
 
 One page per task. Never show a new page for each change. Build pages with **tv-use-web-apps**.
 
-Show pages with `"remote": "tvos"` (or `"focus"` for a page you did not write), so the user can pick on screen with the Siri Remote. Read what they did with `tv.state().input` and act on it without asking.
+The user can pick on screen with the Siri Remote: `tv_show` uses `remote: "tvos"` for a page you write and `"focus"` for a `url`. Read what they did with `tv.state().input` and act on it without asking.
 
 ## Latency
 
