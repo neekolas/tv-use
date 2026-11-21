@@ -90,6 +90,70 @@ def executable(path, code):
     return str(path)
 
 
+# Machine events of tvpipe v0.2.0. The "ended" pair is crates/tvpipe/tests/vectors/machine/events.txt
+# lines 40 and 128: the TV closed the video connection. The other lists follow src/session/rejoin.rs.
+TV_ENDED = [
+    {"type": "receiver", "name": "192.0.2.1:7000", "state": "ended"},
+    {"type": "end", "reason": "receivers-gone", "receivers": [
+        {"name": "192.0.2.1:7000", "pushed": 5, "dropped": 1, "dropped_full": 2, "dropped_waiting": 3, "end": "ended"}]},
+]
+# The TV closed the control connection. On hardware this followed a Menu press, and tvpipe reconnected in 0.7 s.
+TV_CLOSED_CONTROL = [
+    {"type": "receiver", "name": "192.0.2.1:7000", "state": "lost", "error": "airplay: POST /feedback: http: connection closed"},
+    {"type": "receiver", "name": "192.0.2.1:7000", "state": "reconnected"},
+]
+NETWORK_LOSS = [
+    {"type": "receiver", "name": "192.0.2.1:7012", "state": "lost", "error": "airplay: no answer to /feedback for 10 s"},
+    {"type": "receiver", "name": "192.0.2.1:7012", "state": "gave-up",
+     "error": "gave up reconnecting after 120.0 s: airplay: connect: timed out"},
+    {"type": "receiver", "name": "192.0.2.1:7012", "state": "failed", "error": "gave up reconnecting after 120.0 s"},
+    {"type": "end", "reason": "receivers-gone", "receivers": [
+        {"name": "192.0.2.1:7012", "pushed": 5, "dropped": 0, "dropped_full": 0, "dropped_waiting": 0,
+         "end": "failed", "error": "gave up reconnecting after 120.0 s"}]},
+]
+
+# Each launch sends started and frame stats. When the file end-<launch> appears, it prints END_EVENTS.
+# It records its arguments, and the stop record it receives on stdin.
+FAKE_TVPIPE = """import json, os, sys, threading, time
+from pathlib import Path
+root = Path(os.environ['TVPIPE_CONFIG_DIR'])
+with (root / 'launches').open('a') as f:
+    f.write(json.dumps(sys.argv[1:]) + '\\n')
+launch = len((root / 'launches').read_text().splitlines())
+lock = threading.Lock()
+def emit(event):
+    with lock:
+        sys.stdout.write(json.dumps(event) + '\\n')
+        sys.stdout.flush()
+def stats():
+    frames = 0
+    while True:
+        frames += 1
+        emit({"type": "stats", "receivers": [{"pushed": frames}]})
+        time.sleep(.02)
+def end():
+    while not (root / f'end-{launch}').exists():
+        time.sleep(.02)
+    for event in END_EVENTS:
+        emit(event)
+emit({"type": "started"})
+threading.Thread(target=stats, daemon=True).start()
+threading.Thread(target=end, daemon=True).start()
+framing = sys.stdin.buffer.read()
+assert framing.startswith(b'SLRW') and framing.endswith(b'{"type":"stop"}')
+with (root / 'stops').open('a') as f:
+    f.write('stop\\n')
+"""
+
+
+def fake_tvpipe(path, events):
+    return executable(path, f"END_EVENTS = {events!r}\n" + FAKE_TVPIPE)
+
+
+def lines(path):
+    return path.read_text().splitlines() if path.exists() else []
+
+
 @pytest.mark.parametrize(
     "options,audio,size,fps,bitrate",
     [
@@ -102,13 +166,14 @@ def executable(path, code):
     ],
 )
 @pytest.mark.parametrize("level", ["INFO", "DEBUG"])
-async def test_sender_receiver_end_restarts_and_hide_reaps(
+async def test_sender_network_loss_restarts_and_hide_reaps(
     service, tmp_path, caplog, options, audio, size, fps, bitrate, level
 ):
     # tvpipe runs with --debug only when the app logs at debug level.
     caplog.set_level(level, "atv_bridge_app.present.tvpipe")
     script = executable(
         tmp_path / "fake-tvpipe",
+        f"LOSS = {NETWORK_LOSS!r}\n"
         """import json, os, sys, time
 from pathlib import Path
 root = Path(os.environ['TVPIPE_CONFIG_DIR'])
@@ -118,7 +183,8 @@ with count.open('a') as f:
 print('{"type":"started"}', flush=True)
 if len(count.read_text().splitlines()) == 1:
     time.sleep(0.05)
-    print('{"type":"receiver","state":"ended"}', flush=True)
+    for event in LOSS:
+        print(json.dumps(event), flush=True)
 framing = sys.stdin.buffer.read()
 assert framing.startswith(b'SLRW') and framing.endswith(b'{"type":"stop"}')
 with (root / "stops").open("a") as f:
@@ -159,6 +225,134 @@ with (root / "stops").open("a") as f:
     finally:
         await sender.stop()
     assert (tmp_path / "tvpipe" / "stops").read_text().splitlines() == ["stop", "stop"]
+
+
+async def test_sender_restarts_after_tvpipe_exits(service, tmp_path):
+    script = executable(
+        tmp_path / "crash",
+        """import os, sys
+from pathlib import Path
+root = Path(os.environ['TVPIPE_CONFIG_DIR'])
+with (root / 'launches').open('a') as f:
+    f.write('start\\n')
+print('{"type":"started"}', flush=True)
+if len((root / 'launches').read_text().splitlines()) == 1:
+    sys.exit(1)
+sys.stdin.buffer.read()
+""",
+    )
+    sender = TvpipeSender("192.0.2.1", service.state, script, restart_delay=0.01)
+    try:
+        await sender.start(STAGE_URL)
+        await wait_until(lambda: len(lines(tmp_path / "tvpipe" / "launches")) == 2 and sender.started)
+        assert sender.status()["state"] == "showing"
+    finally:
+        await sender.stop()
+
+
+async def test_sender_lost_without_menu_or_home_lets_tvpipe_reconnect(service, tmp_path):
+    sender = TvpipeSender("192.0.2.1", service.state, fake_tvpipe(tmp_path / "lost", TV_CLOSED_CONTROL), restart_delay=0.01)
+    root = tmp_path / "tvpipe"
+    try:
+        await sender.start(STAGE_URL)
+        (root / "end-1").touch()
+        # Frame stats keep coming after the two events, so later frames mean the sender read them.
+        await asyncio.sleep(0.1)
+        frames = sender.frames
+        await wait_until(lambda: sender.frames > frames + 3)
+        assert not sender.runner.done() and sender.status()["state"] == "showing"
+        assert len(lines(root / "launches")) == 1 and lines(root / "stops") == []
+    finally:
+        await sender.stop()
+
+
+@pytest.mark.parametrize(
+    "events,press,evidence",
+    [
+        (TV_ENDED, None, "tvpipe reported that the TV ended the session"),
+        (TV_ENDED[1:], None, "tvpipe reported that the TV ended the session"),
+        (TV_CLOSED_CONTROL, "menu", "Remote menu pressed, then tvpipe lost the TV"),
+        (TV_CLOSED_CONTROL, "home", "Remote home pressed, then tvpipe lost the TV"),
+    ],
+    ids=["receiver-ended", "end-receivers-gone", "lost-after-menu", "lost-after-home"],
+)
+async def test_sender_tv_end_stops_without_restart(service, tmp_path, events, press, evidence):
+    sender = TvpipeSender("192.0.2.1", service.state, fake_tvpipe(tmp_path / "ended", events), restart_delay=0.01)
+    sender.exit_press = lambda: press
+    root = tmp_path / "tvpipe"
+    states = []
+    sender.events.subscribe(lambda status: states.append(status["state"]))
+    try:
+        await sender.start(STAGE_URL)
+        (root / "end-1").touch()
+        await asyncio.wait_for(asyncio.shield(sender.runner), 6)
+        assert sender.status() == {"ok": True, "state": "ended", "evidence": [evidence], "mode": "mirror"}
+        await asyncio.sleep(0.1)
+        assert states[-2:] == ["showing", "ended"]
+        assert len(lines(root / "launches")) == 1 and lines(root / "stops") == ["stop"]
+        # The next show starts a new tvpipe.
+        await sender.start(STAGE_URL)
+        assert sender.status()["state"] == "showing" and len(lines(root / "launches")) == 2
+    finally:
+        await sender.stop()
+
+
+@pytest.mark.parametrize(
+    "events,press", [(TV_ENDED, None), (TV_CLOSED_CONTROL, "menu")], ids=["receiver-ended", "lost-after-menu"]
+)
+async def test_tv_end_dismisses_the_page_and_a_later_show_works(
+    service, aiohttp_client, tmp_path, caplog, events, press
+):
+    caplog.set_level(logging.INFO, "atv_bridge_app.tools.public")
+    service.sender.executable = fake_tvpipe(tmp_path / "show-sender", events)
+    service.sender.restart_delay = 0.01
+    service.sender.browser_page = AsyncMock()  # The machine-protocol fixture has no Chromium.
+    root = tmp_path / "tvpipe"
+    client = await aiohttp_client(service.stage.app())
+
+    async def show(socket, html):
+        call = asyncio.create_task(service.tools.call("tv_show", {"html": html}))
+        page = await socket.receive_json(timeout=2)
+        await socket.send_json({"type": "ready", "page_id": page["page_id"], "revision": page["revision"]})
+        return await asyncio.wait_for(call, 5)
+
+    sockets = [await client.ws_connect("/stage/ws", origin="http://127.0.0.1:8766")]
+    try:
+        first = await show(sockets[0], "<h1>One</h1>")
+        page_id = first["data"]["page_id"]
+        assert first["ok"] and first["screen"]["presenting"]["page_id"] == page_id
+        if press:
+            # The observer reports the press about a second before tvpipe notices the closed connection.
+            service.tools.remote_input.on_event({"event": "button", "key": press})
+        (root / "end-1").touch()
+        await wait_until(lambda: service.stage.page is None, 6)
+        await wait_until(lambda: service.sender.status()["state"] == "idle", 6)
+        assert service.tools.presentation_end == {
+            "reason": "ended_on_tv", "at": service.tools.presentation_end["at"], "page_id": page_id
+        }
+        # The remote watch stopped with the page, and no restart followed.
+        assert service.tools.remote_input.status() is None
+        await asyncio.sleep(0.2)
+        assert len(lines(root / "launches")) == 1 and lines(root / "stops") == ["stop"]
+        assert any("The TV ended the mirror of page " + page_id in r.getMessage() for r in caplog.records)
+        # tv_page_run reports the last screen without a new read. It must not show the old page.
+        run = await service.tools.call("tv_page_run", {"script": "document.title"})
+        assert run["error"]["code"] == "nothing_showing"
+        assert run["screen"]["presenting"] is None
+        assert run["screen"]["last_presentation_end"] == service.tools.presentation_end
+        look = await service.tools.call("tv_look", {})
+        assert look["screen"]["presenting"] is None
+        assert look["screen"]["last_presentation_end"]["reason"] == "ended_on_tv"
+
+        sockets.append(await client.ws_connect("/stage/ws", origin="http://127.0.0.1:8766"))
+        second = await show(sockets[1], "<h1>Two</h1>")
+        assert second["ok"] and second["screen"]["presenting"]["page_id"] == second["data"]["page_id"]
+        assert "last_presentation_end" not in second["screen"] and service.tools.presentation_end is None
+        assert len(lines(root / "launches")) == 2 and service.sender.status()["state"] == "showing"
+    finally:
+        for socket in sockets:
+            await socket.close()
+        assert (await service.tools.call("tv_hide", {}))["ok"]
 
 
 def test_sent_rate_logs_pushed_frames(caplog):

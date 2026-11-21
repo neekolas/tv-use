@@ -509,9 +509,11 @@ class Tools:
                     sender.fail(exc)
                 raise
 
-    async def tv_hide(self):
-        """Stop presenting and close the stage browser."""
+    async def tv_hide(self, still=None):
+        """Stop presenting and close the stage browser. With `still`, only if it returns True under the stage lock."""
         async with self.stage.lock:
+            if still and not still():
+                return None
             await getattr(self, "presenter", self.sender).stop()
             await self.stage.hide()
         return success("hidden", ["Sender stopped"])

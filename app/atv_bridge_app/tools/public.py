@@ -13,7 +13,7 @@ from ..live import TAILNET_DNS_FIX
 from ..present.interaction import PageInteraction
 from ..present.media import MediaPlayback
 from ..present.remote_input import RemoteInput
-from ..state import Fault, classify, reworded
+from ..state import Fault, classify, now, reworded
 from . import link_info, playback_identity
 from .contract import NO_SCREEN, RUN_HELP, SCHEMAS, UNKNOWN, canonical, checked, outcome, public_error, schema
 from ..history import report
@@ -48,6 +48,41 @@ class PublicTools:
         self.media = MediaPlayback(self.engine)
         self.page_interaction = PageInteraction(ops)
         self.remote_input = RemoteInput(ops, self.page_interaction)
+        # Set when the TV ended the last page itself, reported as screen.last_presentation_end.
+        # The next tv_show or takeover clears it.
+        self.presentation_end = None
+        self.dismissals = set()
+        if mirror := getattr(ops, "live_mirror", None):
+            mirror.exit_press = self.remote_input.exit_press
+            mirror.events.subscribe(lambda status: self.mirror_status(mirror, status))
+
+    def mirror_status(self, mirror, status):
+        """Dismiss the page when the TV ends its mirror, as the person did with Menu or Home."""
+        if status.get("state") != "ended" or not self.stage.page:
+            return
+        page_id = self.stage.page["page_id"]
+        task = asyncio.create_task(self.dismiss_ended(mirror, mirror.runner, page_id, status["evidence"]))
+        self.dismissals.add(task)
+        task.add_done_callback(self.dismissals.discard)
+
+    async def dismiss_ended(self, mirror, run, page_id, evidence):
+        def current():
+            # A newer tv_show that started its own mirror run, or another presenter, keeps its page.
+            presenter = getattr(self.ops, "presenter", self.ops.sender)
+            return mirror.runner is run and getattr(presenter, "active", presenter) is mirror
+
+        try:
+            if not await self.ops.tv_hide(still=current):
+                return
+        except Exception:  # noqa: BLE001 - A background task has no caller to report to.
+            _LOG.exception("Could not dismiss page %s after the TV ended its mirror", page_id)
+            return
+        self.presentation_end = {"reason": "ended_on_tv", "at": now(), "page_id": page_id}
+        # tv_page_run and failed calls report the last screen without reading it again.
+        self.last_screen["presenting"] = None
+        self.last_screen["last_presentation_end"] = self.presentation_end
+        _LOG.info("The TV ended the mirror of page %s (%s). The page is dismissed and is not shown again.",
+                  page_id, "; ".join(evidence))
 
     async def snapshot(self, focus=None, read_focus=True, observation=None, *, status=None):
         if status is None:
@@ -83,6 +118,8 @@ class PublicTools:
         }
         if page and (remote := self.remote_input.status()):
             self.last_screen["presenting"]["remote"] = remote
+        if not page and self.presentation_end:
+            self.last_screen["last_presentation_end"] = self.presentation_end
         return self.last_screen.copy()
 
     def failure(self, name, fault):
@@ -221,6 +258,7 @@ class PublicTools:
             self.lock.release()
 
     async def takeover(self):
+        self.presentation_end = None
         await self.media.stop()
         if self.stage.page:
             await self.ops.tv_hide()
@@ -870,6 +908,7 @@ class PublicTools:
         Inspect data.transport and screen.presenting. verified means frames were sent or playback was observed. Use tv_page_run to read or change a live page.
         Siri Remote arrows and Select reach a mirrored page by default: remote is "tvos" for html, files and bundle, and "focus" for url. Lay out a "tvos" page in rows and grids. Set remote to "off" to send no input. data.remote.state is often "starting"; later results report it in screen.presenting.remote.
         For example, tv_show {"html":"<h1>Hello</h1>"}."""
+        self.presentation_end = None
         await self.media.stop()
         if all(source is None for source in (url, html, files, bundle)):
             await self.ops.tv_hide()

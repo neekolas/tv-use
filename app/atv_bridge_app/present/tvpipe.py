@@ -210,6 +210,9 @@ class TvpipeSender(Sender):
         self.changed = asyncio.Event()
         self.started = False
         self.problem = None
+        # Returns "menu" or "home" when the remote pressed that button in the last few seconds, else None.
+        # PublicTools connects it to remote input.
+        self.exit_press = lambda: None
 
     async def start(self, stage_url):
         if self.runner and self.running_audio != self.audio:
@@ -228,7 +231,8 @@ class TvpipeSender(Sender):
             self.runner = asyncio.create_task(self._run())
         try:
             async with asyncio.timeout(20):
-                while not self.started and not self.problem:
+                # The run ends without a problem when the TV ends the session.
+                while not self.started and not self.problem and not self.runner.done():
                     self.changed.clear()
                     await self.changed.wait()
         except TimeoutError as exc:
@@ -240,6 +244,8 @@ class TvpipeSender(Sender):
             ) from exc
         if self.problem:
             raise self.problem
+        if not self.started:
+            raise Fault("presentation_ended", "The TV ended the mirror.", "Show the page again.")
         if self.url != stage_url:
             page = await self.browser_page()
             try:
@@ -411,6 +417,7 @@ class TvpipeSender(Sender):
         failed_host = None
         while True:
             proc = None
+            ended = None  # Evidence when the TV ended the session. Then the mirror does not restart.
             self.frames = 0
             self.transition("starting")
             try:
@@ -493,7 +500,23 @@ class TvpipeSender(Sender):
                             "Check the receiver address, AirPlay access and Chromium.",
                             True,
                         )
-                    if kind == "receiver" and event.get("state") == "ended":
+                    # tvpipe reports "ended" when the TV closes the video connection, as Menu or Home does.
+                    # A network loss cannot close it. The TV can close the control connection first.
+                    # tvpipe calls that "lost" and reconnects, so a Menu or Home press just before decides.
+                    if kind == "receiver" and self.started:
+                        if event.get("state") == "ended":
+                            ended = ["tvpipe reported that the TV ended the session"]
+                        elif event.get("state") == "lost" and (press := self.exit_press()):
+                            ended = [f"Remote {press} pressed, then tvpipe lost the TV"]
+                    if kind == "end" and event.get("reason") == "receivers-gone" and self.started:
+                        receivers = event.get("receivers") or []
+                        if receivers and all(row.get("end") == "ended" for row in receivers):
+                            ended = ["tvpipe reported that the TV ended the session"]
+                    if ended:
+                        # Report it before tvpipe's cleanup, which can take seconds.
+                        _LOG.info("The TV ended the mirror (%s). The mirror does not restart.", ended[0])
+                        self.transition("ended", ended)
+                        self.changed.set()
                         break
                     if kind == "end" and event.get("reason") != "error":
                         break
@@ -538,6 +561,8 @@ class TvpipeSender(Sender):
                 except asyncio.CancelledError:
                     await cleanup
                     raise
+            if ended:
+                return
             failed_host = host
             await asyncio.sleep(delay)
             delay = min(delay * 2, 60)

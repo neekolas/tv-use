@@ -205,6 +205,17 @@ async def test_only_successful_media_get_confirms_playback(service, aiohttp_clie
         assert part.status == 206 and await part.read() == b"li" and event.is_set()
 
 
+async def test_auto_does_not_fall_back_when_the_tv_ends_the_mirror():
+    mirror, clip = ProbeSender("mirror"), ProbeSender("play_url")
+    sender = AutoSender(mirror, clip)
+    await sender.start(STAGE_URL)
+    mirror.transition("ended", ["tvpipe reported that the TV ended the session"])
+    assert sender.recovery is None and clip.calls == []
+    assert sender.status()["state"] == "ended" and sender.status()["mode"] == "mirror"
+    await sender.stop()
+    assert sender.status()["state"] == "idle"
+
+
 async def test_auto_handles_failed_receiver_restart_while_page_is_shown():
     mirror, clip = ProbeSender("mirror"), ProbeSender("play_url")
     sender = AutoSender(mirror, clip)

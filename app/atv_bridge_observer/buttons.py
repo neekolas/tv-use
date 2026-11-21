@@ -35,6 +35,11 @@ USAGE_KEYS = {
     (0x0C, 0x44): "left",
     (0x0C, 0x45): "right",
     (0x0C, 0x80): "select",
+    # tvOS handles these two and ends the mirror. The app reports them but never forwards them.
+    # Menu: "Menu page:0x1 usage:0x86", physical Siri Remotes on tvOS 26.6.1 and 27.2.
+    # TV (Home): "TV page:0xC usage:0x60", physical clickpad Siri Remote on tvOS 27.2.
+    (0x01, 0x86): "menu",
+    (0x0C, 0x60): "home",
 }
 
 

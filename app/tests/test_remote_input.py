@@ -61,9 +61,12 @@ async def until(condition, timeout=2):
         (LEFT.replace("downEvent:1", "downEvent:0").replace("D02 down", "D02 up"), (None, True)),
         (" 0x1/0x8B/100003D02 began: firstDown:0s ago b0e0u0 destinations:<keyboardFocus>", (None, True)),
         (" 0x1/0x8B/100003D02 finished: firstDown:0.00454s ago b0e0u1", (None, True)),
+        # Menu and TV, logged by the same remote on 2026-11-21. tvOS handles them. The app never forwards them.
+        ("Menu page:0x1 usage:0x86 downEvent:1 source:verifiedExternalAccessory senderID:100000597 down", ("menu", True)),
+        ("TV page:0xC usage:0x60 downEvent:1 source:verifiedExternalAccessory senderID:100000597 down", ("home", True)),
         # Unknown keys and unknown line shapes are reported for diagnosis, never as a key.
-        ("TV page:0xC usage:0x60 downEvent:1 source:externalAccessory (MediaRemote) senderID:1 down", (None, False)),
-        ("Unknown page:0xC usage:0x60 downEvent:0 source:x senderID:1 up", (None, True)),
+        ("Unknown page:0xC usage:0xCD downEvent:1 source:externalAccessory (MediaRemote) senderID:1 down", (None, False)),
+        ("Unknown page:0xC usage:0xCD downEvent:0 source:x senderID:1 up", (None, True)),
         ("A new line shape", (None, False)),
     ],
 )
@@ -273,7 +276,7 @@ async def test_watch_reports_one_key_per_press_with_a_pid_filter(watch):
         assert (stream.pid, stream.flags) == (68, 0x24)
         up = LEFT.replace("downEvent:1", "downEvent:0")
         for line in (entry(LEFT), entry(up), entry(" 0x1/0x8B/1 began: x"), entry(" 0x1/0x8B/1 finished: x"),
-                     entry(LEFT, process="rapportd"), entry("TV page:0xC usage:0x60 downEvent:1 x"),
+                     entry(LEFT, process="rapportd"), entry("Unknown page:0xC usage:0xCD downEvent:1 x"),
                      entry(LEFT, device=time.time() - 30)):
             stream.lines.put_nowait(line)
         await until(lambda: any(e["event"] == "button_unmatched" for e in events))
@@ -281,7 +284,7 @@ async def test_watch_reports_one_key_per_press_with_a_pid_filter(watch):
         presses = [e for e in events if e["event"] == "button"]
         assert [e["key"] for e in presses] == ["left"]
         assert presses[0]["received"] >= presses[0]["device_time"]
-        assert [e["message"] for e in events if e["event"] == "button_unmatched"] == ["TV page:0xC usage:0x60 downEvent:1 x"]
+        assert [e["message"] for e in events if e["event"] == "button_unmatched"] == ["Unknown page:0xC usage:0xCD downEvent:1 x"]
     finally:
         await watch.stop()
 
@@ -470,7 +473,7 @@ def test_real_touch_remote_capture_replays_to_the_expected_keys():
                    + ["right", "right", "right (momentum)"]
                    + ["up", "up (momentum)"]
                    + ["down"] + ["down (momentum)"] * 2
-                   + ["right"] * 4)
+                   + ["right"] * 4 + ["menu"])
     # One report per contact that ended: four clicks with the finger on the surface, four swipes, two drags.
     assert [report["no_momentum"] for report in reports] == ["clicked"] * 4 + [None] * 4 + ["below_v_min", "no_dominant_axis"]
     assert [report["lift_v"] and max(map(abs, report["lift_v"])) for report in reports[4:]] == [9.82, 6.57, 5.19, 9.36, 0.52, 0.69]
@@ -1048,6 +1051,25 @@ async def test_watch_follows_the_presented_page(remote):
     await until(lambda: observer.count("buttons_stop") == 2)
     observer.emit({"event": "button", "key": "left"})
     assert control.presses == 0 and control.queue.empty()
+
+
+async def test_menu_and_home_are_noted_for_the_mirror_and_never_reach_the_page(remote):
+    service, observer, control = remote
+    await service.stage.show("a", "/c/a/index.html", remote="tvos")
+    await until(lambda: control.state == "active")
+    assert control.exit_press() is None
+    observer.emit({"event": "button", "key": "menu"})
+    assert control.exit_press() == "menu"
+    observer.emit({"event": "button", "key": "home"})
+    assert control.exit_press() == "home"
+    assert control.presses == 0 and control.queue.empty() and control.status()["last"] is None
+    # Only a recent press explains a lost mirror.
+    control.exit = ("menu", time.monotonic() - remote_input.EXIT_WINDOW_S - 0.1)
+    assert control.exit_press() is None
+    # A new page starts without one. A screen saver wake before a show sends its own Menu.
+    observer.emit({"event": "button", "key": "menu"})
+    await service.stage.show("b", "/c/b/index.html", remote="tvos")
+    assert control.exit_press() is None
 
 
 async def test_watch_restarts_when_the_observer_process_closes(remote, monkeypatch):

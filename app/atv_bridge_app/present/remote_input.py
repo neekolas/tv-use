@@ -23,6 +23,11 @@ KEYS = {
 }
 # Input.dispatchKeyEvent needs the Windows key code of each key.
 KEY_CODES = {"ArrowLeft": 37, "ArrowUp": 38, "ArrowRight": 39, "ArrowDown": 40, "Enter": 13}
+# tvOS handles Menu and Home itself and ends the mirror. The page never gets them.
+EXITS = ("menu", "home")
+# A press this recent explains a lost mirror. tvpipe notices a closed control connection
+# at its next /feedback, which it sends every 2 s. On hardware the gap was about 1 s.
+EXIT_WINDOW_S = 3.0
 STALE_S = 2.0
 QUEUE_LIMIT = 8
 RETRY_MAX_S = 30
@@ -387,6 +392,7 @@ class RemoteInput:
         self.presses = 0
         self.missed = 0
         self.last = None
+        self.exit = None  # (key, monotonic time) of the last Menu or Home press on this page.
         self.watching = False
         self.delay = 1
         self.subscribed = False
@@ -424,7 +430,7 @@ class RemoteInput:
         revision = page["revision"] if page else None
         if revision != self.revision:
             # A top-level page keeps its frame object across shows, so the frame alone does not tell a new page.
-            self.revision, self.presses, self.last, self.awake = revision, 0, None, None
+            self.revision, self.presses, self.last, self.awake, self.exit = revision, 0, None, None, None
             # A prime that is still running belongs to the page before.
             if self.priming:
                 self.priming.cancel()
@@ -476,6 +482,9 @@ class RemoteInput:
             self._set(event.get("state"), event.get("reason"))
             if self.state == "active":
                 self.delay = 1
+        elif kind == "button" and event.get("key") in EXITS:
+            self.exit = (event["key"], time.monotonic())
+            _LOG.info("Remote %s pressed. tvOS handles it and ends the mirror.", event["key"])
         elif kind == "button" and event.get("key") in KEYS:
             self.presses += 1
             self.last = {"key": event["key"], "at": now()}
@@ -488,6 +497,12 @@ class RemoteInput:
             _LOG.info("Remote touch line with an unknown shape: %s", event.get("message"))
         elif kind == "button_unmatched":
             _LOG.debug("Unmatched button log line: %s", event.get("message"))
+
+    def exit_press(self):
+        """Return "menu" or "home" when that button was pressed in the last EXIT_WINDOW_S seconds, else None."""
+        if self.exit and time.monotonic() - self.exit[1] <= EXIT_WINDOW_S:
+            return self.exit[0]
+        return None
 
     def log_touch(self, report):
         """Log what the observer made of one finger contact. The values tune atv_bridge_observer/touch.py."""
