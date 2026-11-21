@@ -88,7 +88,6 @@ class PublicTools:
             return
         # tv_page_run and failed calls report the last screen without reading it again.
         self.last_screen["presenting"] = None
-        self.last_screen["last_presentation_end"] = end
         _LOG.info("The TV ended the mirror of page %s (%s, %s). The page is dismissed and is not shown again.",
                   end["page_id"], "; ".join(evidence), end["reason"])
 
@@ -139,9 +138,14 @@ class PublicTools:
         }
         if page and (remote := self.remote_input.status()):
             self.last_screen["presenting"]["remote"] = remote
-        if not page and self.ops.presentation_end:
-            self.last_screen["last_presentation_end"] = self.ops.presentation_end
-        return self.last_screen.copy()
+        return self.cached_screen()
+
+    def cached_screen(self):
+        """The last screen read, with the current end record. A takeover since the read can have cleared it."""
+        screen = self.last_screen.copy()
+        if not screen.get("presenting") and self.ops.presentation_end:
+            screen["last_presentation_end"] = self.ops.presentation_end
+        return screen
 
     def failure(self, name, fault):
         error = public_error(fault)
@@ -153,7 +157,7 @@ class PublicTools:
         )
         result.update(ok=False, error=error)
         if name not in NO_SCREEN:
-            result["screen"] = self.last_screen.copy()
+            result["screen"] = self.cached_screen()
         return result
 
     def audit_failure(self, name, args, fault):
@@ -227,7 +231,7 @@ class PublicTools:
                 if self.action_evidence:
                     result["evidence"][:0] = self.action_evidence
                 if name != "tv_status" and "screen" not in result:
-                    result["screen"] = self.last_screen.copy() if name == "tv_page_run" else await self.snapshot()
+                    result["screen"] = self.cached_screen() if name == "tv_page_run" else await self.snapshot()
                 if name == "tv_look":
                     self.last_look = {k: v for k, v in result.items() if k != "image"}
         except Exception as exc:  # noqa: BLE001 - Both public transports use this contract.

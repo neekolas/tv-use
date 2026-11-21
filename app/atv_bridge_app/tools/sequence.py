@@ -148,7 +148,7 @@ async def run_sequence(tools, steps, for_each):
                 "data", {k: v for k, v in fault.fields.items() if k != "evidence"}
             )
             if row["operation"] == "expect" and fault.code == "not_found":
-                screen = tools.last_screen.copy()
+                screen = tools.cached_screen()
 
     if screen is None:
         try:

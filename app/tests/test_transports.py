@@ -302,8 +302,13 @@ async def test_sender_tv_end_stops_without_restart(service, tmp_path, events, pr
 
 @pytest.mark.parametrize(
     "events,press,reason",
-    [(TV_ENDED, None, "ended_on_tv"), (TV_CLOSED_CONTROL, "menu", "ended_on_tv"), (TV_ENDED, "tool", "ended_by_tool")],
-    ids=["receiver-ended", "lost-after-menu", "tool-menu"],
+    [
+        (TV_ENDED, None, "ended_on_tv"),
+        (TV_CLOSED_CONTROL, "menu", "ended_on_tv"),
+        (TV_ENDED, "tv_remote", "ended_by_tool"),
+        (TV_ENDED, "tv_sequence", "ended_by_tool"),
+    ],
+    ids=["receiver-ended", "lost-after-menu", "tv-remote-menu", "tv-sequence-home"],
 )
 async def test_tv_end_dismisses_the_page_and_a_later_show_works(
     service, aiohttp_client, tmp_path, caplog, events, press, reason
@@ -326,9 +331,11 @@ async def test_tv_end_dismisses_the_page_and_a_later_show_works(
         first = await show(sockets[0], "<h1>One</h1>")
         page_id = first["data"]["page_id"]
         assert first["ok"] and first["screen"]["presenting"]["page_id"] == page_id
-        if press == "tool":
-            # The agent's own Back. tvOS ends the mirror as it does for the remote.
+        # The agent's own Menu or Home. tvOS ends the mirror as it does for the remote.
+        if press == "tv_remote":
             assert (await service.tools.call("tv_remote", {"keys": ["menu"]}))["ok"]
+        elif press == "tv_sequence":
+            assert (await service.tools.call("tv_sequence", {"steps": [{"key": "home"}]}))["ok"]
         elif press:
             # The observer reports the press about a second before tvpipe notices the closed connection.
             service.tools.remote_input.on_event({"event": "button", "key": press})
@@ -422,9 +429,12 @@ async def test_a_takeover_clears_the_end_record_and_a_later_end_is_not_recorded(
 
     end = await dismissed("a" * 32)
     assert service.operations.presentation_end == end
-    # B takes over and then fails. The failure hides B, and A's end does not come back.
+    # B takes over and then fails. The failure hides B, and A's end does not come back, not even in
+    # the cached screen that a failed call reports when its screen read times out.
     mirror.start = AsyncMock(side_effect=Fault("sender_failed", "The mirror did not start.", "Check AirPlay.", True))
+    snapshot, service.tools.snapshot = service.tools.snapshot, AsyncMock(side_effect=TimeoutError)
     failed = await service.tools.call("tv_show", {"html": "<h1>B</h1>", "remote": "off"})
+    service.tools.snapshot = snapshot
     assert failed["error"]["code"] == "page_unreachable" and service.stage.page is None
     assert service.operations.presentation_end is None and "last_presentation_end" not in failed["screen"]
     # A call that takes over with no page showing clears the record too.
