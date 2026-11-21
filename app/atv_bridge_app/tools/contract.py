@@ -88,22 +88,35 @@ SHOW = {
     "title": described(TEXT, "Title to report in screen.presenting."),
     "audio": described(
         {"enum": ["play", "mute"]},
-        "Play or mute page audio. Use mute for a page that plays no sound: "
-        "a mirror with audio uses about one more CPU core on a Home Assistant Green and shows fewer frames.",
+        "Play or mute page audio. Use mute for every page that plays no sound. It makes the mirror faster: "
+        "on a Home Assistant Green it uses about one CPU core less and sends more frames, about 9 fps instead of 7 at 1080p.",
         default="play",
     ),
     "keep_awake": described(BOOL, "Request a browser wake lock while presenting.", default=True),
     "remote": described(
-        {"enum": ["off", "keys", "focus", "tvos"]},
-        "Send Siri Remote input to a mirrored page. keys sends arrow keys and Enter. "
-        "focus also moves focus between links and controls and shows a focus ring. "
+        {"enum": ["off", "focus", "tvos"]},
+        "Send Siri Remote input to a mirrored page. The default is tvos for html, files and bundle, and focus for url. "
+        "focus sends arrow keys and Enter, moves focus between links and controls and shows a focus ring. "
         "tvos is focus with a tvOS look for pages you write: the focused item lifts, up and down go straight between rows. "
+        "A page that handles a key and calls preventDefault() keeps it. off sends no input. "
         "Clickpad remote: ring clicks are arrows, center click is Enter. "
         "Touch-surface remote: swipes and flicks are arrows, any click is Enter. "
         "Menu and Home stay with tvOS and end the mirror. Play/Pause and volume are not forwarded.",
-        default="off",
     ),
 }
+
+
+def canonical(name, args):
+    """Return args with undocumented aliases replaced. Call it before schema validation.
+
+    Earlier callers sent remote: "keys". The schema does not list it. focus sends the same keys,
+    and a page that handles a key and calls preventDefault() keeps it.
+    """
+    if name == "tv_show" and isinstance(args, dict) and args.get("remote") == "keys":
+        return args | {"remote": "focus"}
+    return args
+
+
 # These are caller-side examples. The browser check runs the advertised recipes verbatim.
 OUTLINE_RECIPE = """const roles = {a:'link', button:'button', text:'textbox', password:'textbox', search:'searchbox', h1:'heading', h2:'heading', h3:'heading', h4:'heading', h5:'heading', h6:'heading'};
 const items = [...document.querySelectorAll('button,a[href],input,h1,h2,h3,h4,h5,h6')];
@@ -245,10 +258,12 @@ For live URLs, keep the server running. The Green loads the real site, including
 WebSockets and reloads. For a local server, use tailscale serve and pass its HTTPS MagicDNS URL.
 Pages that block framing open at the top level. Bundle-relative links and assets work.
 Page requests to Home Assistant and other LAN services are blocked by default.
-Page audio plays by default. Use audio: "mute" for a silent presentation.
-With remote: "keys", a mirrored page gets ArrowLeft, ArrowRight, ArrowUp, ArrowDown and Enter key events
-for Siri Remote input. With remote: "focus", arrows also move focus between links and controls,
-unless the page handles the key itself.
+Page audio plays by default. Use audio: "mute" for every page that plays no sound. On a Home Assistant
+Green the mirror then uses about one CPU core less and sends about 9 fps instead of 7 at 1080p.
+The Siri Remote works on a mirrored page by default: remote is "tvos" for html, files and bundle,
+and "focus" for url. Set remote: "off" to send no input. With remote: "focus", a mirrored page gets
+ArrowLeft, ArrowRight, ArrowUp, ArrowDown and Enter key events, and arrows move focus between links and
+controls, unless the page handles the key and calls preventDefault().
 With remote: "tvos", the focused item also lifts with a shadow and a white ring, and Up and Down go to
 the next row on screen and take the item straight above or below, or else the nearest one. For "tvos", put focusable items in rows and grids, put
 each row in a horizontal scroll container or a data-tv-group element, leave 8% spare room around

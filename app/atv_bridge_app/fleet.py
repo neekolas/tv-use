@@ -20,7 +20,7 @@ from .page_network import PageNetworkPolicy
 from .server import TVRuntime
 from .stage import ContentStore
 from .state import Fault, State, write_private
-from .tools.contract import ROUTED_SCHEMAS, TEXT, schema
+from .tools.contract import ROUTED_SCHEMAS, TEXT, canonical, schema
 from .tools.public import UNKNOWN, outcome
 
 _LOG = logging.getLogger(__name__)
@@ -486,6 +486,7 @@ class Fleet:
             self.mirrors.pop(rt.metadata["id"], None)
 
     async def call(self, name, args):
+        args = canonical(name, args)
         spec = ROUTED_SCHEMAS.get(name, schema({"tv": TEXT}) if name == "tv_hide" else None)
         if not spec or not Draft202012Validator(spec).is_valid(args):
             result = self.primary.tools.audit_failure(

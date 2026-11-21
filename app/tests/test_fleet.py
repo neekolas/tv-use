@@ -116,6 +116,14 @@ async def test_routing_and_independent_locks(tmp_path):
     assert (await fleet.call("tv_look", {"tv": "missing"}))["error"]["code"] == "tv_not_found"
 
 
+async def test_fleet_maps_the_keys_alias_before_routing(tmp_path):
+    fleet = rooms(tmp_path)
+    living = fleet.select("Living Room")
+    living.tools.call = AsyncMock(return_value={"ok": True})
+    assert (await fleet.call("tv_show", {"tv": "Living Room", "html": "x", "remote": "keys"}))["ok"]
+    living.tools.call.assert_awaited_once_with("tv_show", {"html": "x", "remote": "focus"}, replace=False)
+
+
 @pytest.mark.parametrize("limit", [1, 2])
 async def test_mirror_admission_replacement_and_hide(tmp_path, limit):
     fleet = rooms(tmp_path, limit)
@@ -129,14 +137,15 @@ async def test_mirror_admission_replacement_and_hide(tmp_path, limit):
 
         rt.operations.present = show
         rt.tools.snapshot = AsyncMock(return_value={})
-    assert (await fleet.call("tv_show", {"tv": "Living Room", "html": "1"}))["ok"]
+    # This test is about mirror slots. Its fake present starts no remote input.
+    assert (await fleet.call("tv_show", {"tv": "Living Room", "html": "1", "remote": "off"}))["ok"]
     b.tools.action_evidence = ["Previous call"]
-    second = await fleet.call("tv_show", {"tv": "Bedroom", "html": "2"})
+    second = await fleet.call("tv_show", {"tv": "Bedroom", "html": "2", "remote": "off"})
     if limit == 1:
         assert second["error"]["code"] == "mirror_busy"
         assert "Previous call" not in second["evidence"]
         assert second["data"]["holders"][0]["name"] == "Living Room" and a.stage.page
-        second = await fleet.call("tv_show", {"tv": "Bedroom", "html": "2", "replace": True})
+        second = await fleet.call("tv_show", {"tv": "Bedroom", "html": "2", "remote": "off", "replace": True})
         assert a.stage.page is None
     else:
         assert a.stage.page

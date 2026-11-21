@@ -11,6 +11,8 @@ from ..state import classify, now
 
 _LOG = logging.getLogger(__name__)
 
+# tv_show offers off, focus and tvos, and maps its old "keys" to focus. Here "keys" still names the
+# raw key path without a helper, which focus and tvos build on. Only tests show a page with it.
 MODES = ("off", "keys", "focus", "tvos")
 KEYS = {
     "left": "ArrowLeft",

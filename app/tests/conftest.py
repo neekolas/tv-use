@@ -92,6 +92,9 @@ async def service(tmp_path):
     script = """import json,sys,os
 for line in sys.stdin:
     cmd = json.loads(line)
+    if cmd["method"] == "buttons_start":
+        # The real observer reports the watch once the TV accepts its log stream.
+        print(json.dumps({"event": "buttons", "state": "active"}), flush=True)
     data = {"screenshot": {"png": sys.argv[1]}, "ax_focused": {"focused": {"caption": "TV"}},
             "ax_items": {"items": [{"caption":"TV","spoken_description":"TV","uid":"tile-1"}], "truncated": True},
             "ax_running_apps": {"apps": [{"bundle_id":"com.apple.TV","name":"TV","pid":1}]}}
@@ -104,6 +107,7 @@ for line in sys.stdin:
     result.tools.play_timeout = 0
     result.tools.settle_ms = 0
     yield result
+    await result.tools.remote_input.close()
     await result.observer.close()
     await result.tools.media.stop()
     await result.engine.stop()

@@ -12,14 +12,18 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import httpx2
 import pytest
 from jsonschema import Draft202012Validator
+from mcp import ClientSession
+from mcp.client.streamable_http import streamable_http_client
 
 from atv_bridge_app.present import remote_input
 from atv_bridge_app.present.remote_input import FOCUS_HELPER, FOCUS_STAGE, PRESS_LOG, TVOS_HELPER
 from atv_bridge_app.processes import ObserverClient
 from atv_bridge_app.state import Fault, State
-from atv_bridge_app.tools.contract import ROUTED_SCHEMAS, SCHEMAS
+from atv_bridge_app.tools.contract import PAGE_GUIDE, ROUTED_SCHEMAS, SCHEMAS, canonical
+from atv_bridge_app.tools.public import PublicTools
 from atv_bridge_observer import __main__ as observer_module
 from atv_bridge_observer import buttons, touch
 
@@ -1111,33 +1115,65 @@ async def test_touch_reports_reach_the_app_log_at_info_level(remote, caplog, mon
 
 
 def present_as(service, mode):
-    async def present(*, remote="off", **_):
+    """Fake the presentation. Record the remote mode that tv_show passes, and show it as present does."""
+    shown = []
+
+    async def present(*, remote, **_):
+        shown.append(remote)
         await service.stage.show("page", "/c/page/index.html", **({"remote": remote} if remote != "off" else {}))
         return {"page_id": "page", "mode": mode, "verified": True, "evidence": []}
 
     service.operations.present = present
+    return shown
+
+
+@pytest.mark.parametrize("source,mode", [
+    ({"html": "<h1>x</h1>"}, "tvos"),
+    ({"files": {"index.html": "<h1>x</h1>"}}, "tvos"),
+    ({"bundle": "b1"}, "tvos"),
+    # A live site was not laid out for the tvOS lift, which could clip or cover a neighbor.
+    ({"url": "https://example.org/"}, "focus"),
+])
+async def test_show_picks_the_remote_mode_by_page_type(remote, source, mode):
+    service, observer, control = remote
+    shown = present_as(service, "mirror")
+    result = await service.tools.call("tv_show", source)
+    # The result reports the mode in effect, also when the caller did not ask for one.
+    assert shown == [mode] and result["ok"] and result["data"]["remote"] == {"mode": mode, "state": "active"}
+    assert result["screen"]["presenting"]["remote"]["mode"] == mode and observer.count("buttons_start") == 1
 
 
 async def test_show_reports_remote_input(remote):
     service, observer, control = remote
-    present_as(service, "mirror")
+    shown = present_as(service, "mirror")
     call = service.tools.call
-    result = await call("tv_show", {"html": "<h1>x</h1>", "remote": "keys"})
-    assert result["ok"] and result["data"]["remote"] == {"mode": "keys", "state": "active"}
+    result = await call("tv_show", {"html": "<h1>x</h1>"})
+    assert result["ok"] and result["data"]["remote"] == {"mode": "tvos", "state": "active"}
     observer.emit({"event": "button", "key": "select", "received": time.time()})
     screen = (await call("tv_look", {}))["screen"]
     live = screen["presenting"]["remote"]
     assert live["presses"] == 1 and live["last"]["key"] == "select" and live["last"]["at"]
 
-    # The option is off unless asked. Results keep their earlier shape.
-    result = await call("tv_show", {"html": "<h1>x</h1>"})
+    # off sends no input. Its result has no remote fields, as before.
+    result = await call("tv_show", {"html": "<h1>x</h1>", "remote": "off"})
     assert "remote" not in result["data"] and "remote" not in result["screen"]["presenting"]
     await until(lambda: observer.count("buttons_stop") == 1)
 
+    # An explicit mode wins over the default for the page type.
     result = await call("tv_show", {"html": "<h1>x</h1>", "remote": "focus"})
     assert result["data"]["remote"] == {"mode": "focus", "state": "active"}
-    assert (await call("tv_show", {}))["screen"]["presenting"] is None
+    result = await call("tv_show", {"url": "https://example.org/", "remote": "tvos"})
+    assert result["data"]["remote"] == {"mode": "tvos", "state": "active"}
+    # Earlier callers sent "keys". It is an alias of focus.
+    result = await call("tv_show", {"url": "https://example.org/", "remote": "keys"})
+    assert result["ok"] and result["data"]["remote"] == {"mode": "focus", "state": "active"}
+    assert shown == ["tvos", "off", "focus", "tvos", "focus"]
+
+    # Dismissing takes no remote mode and stops the watch.
+    dismissed = await call("tv_show", {})
+    assert dismissed["ok"] and dismissed["screen"]["presenting"] is None and "remote" not in dismissed["data"]
     await until(lambda: observer.count("buttons_stop") == 2)
+    assert len(shown) == 5 and control.status() is None
 
 
 @pytest.mark.parametrize("case,reason", [("unpaired", "screen_not_paired"), ("crash", "observer_unavailable"),
@@ -1153,9 +1189,9 @@ async def test_show_succeeds_when_remote_input_cannot_start(remote, case, reason
         observer.failure = Fault("observer_unavailable", "Observer did not respond.", "Check.")
     elif case == "stream":
         observer.reply = {"event": "buttons", "state": "unavailable", "reason": reason}
-    result = await service.tools.call("tv_show", {"html": "<h1>x</h1>", "remote": "keys"})
+    result = await service.tools.call("tv_show", {"html": "<h1>x</h1>"})
     assert result["ok"] and result["verified"]
-    assert result["data"]["remote"] == {"mode": "keys", "state": "unavailable", "reason": reason}
+    assert result["data"]["remote"] == {"mode": "tvos", "state": "unavailable", "reason": reason}
     assert result["screen"]["presenting"]["remote"]["reason"] == reason
     if case == "video":
         assert observer.calls.count("buttons_start") == 0
@@ -1167,8 +1203,8 @@ async def test_show_does_not_wait_long_for_a_slow_watch(remote, monkeypatch):
     observer.reply = None
     settle = control.settle
     monkeypatch.setattr(control, "settle", lambda: settle(0.05))
-    result = await service.tools.call("tv_show", {"html": "<h1>x</h1>", "remote": "keys"})
-    assert result["ok"] and result["data"]["remote"] == {"mode": "keys", "state": "starting"}
+    result = await service.tools.call("tv_show", {"html": "<h1>x</h1>"})
+    assert result["ok"] and result["data"]["remote"] == {"mode": "tvos", "state": "starting"}
 
 
 async def test_video_only_bridge_never_starts_the_watch(remote):
@@ -1208,10 +1244,43 @@ async def test_watch_stops_when_the_mirror_falls_back_or_fails(remote, caplog, c
 
 def test_show_schema_accepts_the_remote_option():
     valid = Draft202012Validator(SCHEMAS["tv_show"]).is_valid
-    assert SCHEMAS["tv_show"]["properties"]["remote"]["default"] == "off"
-    assert all(valid({"html": "x", "remote": mode}) for mode in ("off", "keys", "focus", "tvos"))
-    assert not valid({"html": "x", "remote": "mouse"}) and not valid({"remote": "keys"})
+    spec = SCHEMAS["tv_show"]["properties"]["remote"]
+    # The default depends on the page type, so the schema states it in words only.
+    assert spec["enum"] == ["off", "focus", "tvos"] and "default" not in spec
+    assert "tvos for html, files and bundle, and focus for url" in spec["description"]
+    assert all(valid({"html": "x", "remote": mode}) for mode in ("off", "focus", "tvos"))
+    assert not valid({"html": "x", "remote": "mouse"}) and not valid({"remote": "focus"})
     assert Draft202012Validator(ROUTED_SCHEMAS["tv_show"]).is_valid({"tv": "Bedroom", "html": "x", "remote": "focus"})
+
+
+def test_keys_is_an_unlisted_alias_of_focus():
+    for schemas in (SCHEMAS, ROUTED_SCHEMAS):
+        assert not Draft202012Validator(schemas["tv_show"]).is_valid({"html": "x", "remote": "keys"})
+    assert canonical("tv_show", {"html": "x", "remote": "keys"}) == {"html": "x", "remote": "focus"}
+    # A call with no source stays invalid. Other tools and values are unchanged.
+    assert not Draft202012Validator(SCHEMAS["tv_show"]).is_valid(canonical("tv_show", {"remote": "keys"}))
+    assert canonical("tv_remote", {"keys": ["up"]}) == {"keys": ["up"]}
+    assert canonical("tv_show", {"html": "x", "remote": ["keys"]}) == {"html": "x", "remote": ["keys"]}
+    assert canonical("tv_show", None) is None
+    # The tool description does not offer it.
+    assert '"keys"' not in PublicTools.tv_show.__doc__ and '"keys"' not in PAGE_GUIDE
+
+
+async def test_keys_alias_reaches_tv_show_through_mcp(remote, aiohttp_client):
+    service, observer, control = remote
+    shown = present_as(service, "mirror")
+    client = await aiohttp_client(service.app())
+    async with (
+        httpx2.AsyncClient(headers={"Authorization": "Bearer " + service.state.token}) as http,
+        streamable_http_client(str(client.make_url("/mcp")), http_client=http) as (read, write),
+        ClientSession(read, write) as session,
+    ):
+        await session.initialize()
+        listed = {tool.name: tool for tool in (await session.list_tools()).tools}["tv_show"]
+        assert listed.input_schema["properties"]["remote"]["enum"] == ["off", "focus", "tvos"]
+        result = await session.call_tool("tv_show", {"html": "<h1>x</h1>", "remote": "keys"})
+    assert not result.is_error and result.structured_content["data"]["remote"]["mode"] == "focus"
+    assert shown == ["focus"]
 
 
 # --- Dispatch --------------------------------------------------------------

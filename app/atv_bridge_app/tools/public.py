@@ -15,7 +15,7 @@ from ..present.media import MediaPlayback
 from ..present.remote_input import RemoteInput
 from ..state import Fault, classify, reworded
 from . import link_info, playback_identity
-from .contract import NO_SCREEN, RUN_HELP, SCHEMAS, UNKNOWN, checked, outcome, public_error, schema
+from .contract import NO_SCREEN, RUN_HELP, SCHEMAS, UNKNOWN, canonical, checked, outcome, public_error, schema
 from ..history import report
 from .sequence import run_sequence
 from .deep_link import confirm_custom_link, link_targets, observed, title_action
@@ -116,6 +116,7 @@ class PublicTools:
         return result
 
     async def dispatch(self, name, args, replace):
+        args = canonical(name, args)
         spec = SCHEMAS.get(name, schema() if name == "tv_hide" else None)
         if spec is None or not Draft202012Validator(spec).is_valid(args):
             return self.audit_failure(
@@ -863,17 +864,20 @@ class PublicTools:
 
     async def tv_show(
         self, url=None, html=None, files=None, bundle=None, title=None, audio="play", keep_awake=True,
-        remote="off",
+        remote=None,
     ):
         """Present a page, or dismiss it by omitting the source. Can wake the TV and replaces its bridge media or page.
         The HA host renders the page and mirrors it or plays a recording. Live URLs use a mirror. The default fleet limit is one active mirror.
         Inspect data.transport and screen.presenting. verified means frames were sent or playback was observed. Use tv_page_run to read or change a live page.
-        Set remote to "keys", "focus" or "tvos" so Siri Remote arrows and Select reach a mirrored page. Use "tvos" for a page you lay out in rows and grids. Check data.remote.state and screen.presenting.remote.
+        Siri Remote arrows and Select reach a mirrored page by default: remote is "tvos" for html, files and bundle, and "focus" for url. Lay out a "tvos" page in rows and grids. Set remote to "off" to send no input. Check data.remote and screen.presenting.remote.
         For example, tv_show {"html":"<h1>Hello</h1>"}."""
         await self.media.stop()
         if all(source is None for source in (url, html, files, bundle)):
             await self.ops.tv_hide()
             return outcome("Stopped presenting.", ["Sender stopped"])
+        if remote is None:
+            # A page you write is laid out for the tvOS lift. On a live site the lift could clip or cover a neighbor.
+            remote = "focus" if url is not None else "tvos"
         result = await self.ops.present(
             url=url,
             html=html,
