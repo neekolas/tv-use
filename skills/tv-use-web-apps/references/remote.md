@@ -26,6 +26,6 @@ Example: `tv_show {"bundle":"<pick-one ID>","audio":"mute"}` uses `tvos`. `tv_sh
 
 - Clickpad Siri Remote: ring clicks become arrows and the center becomes Enter. Verified on tvOS 27.2.
 - 1st-gen touch remote: swipes become arrows (a fast flick moves several items) and any click becomes Enter. Clicks are verified; swipes only by replaying a real capture.
-- Menu and Home stay with tvOS, and Menu ends the mirror. Play/Pause and volume aren't forwarded.
+- Menu and Home stay with tvOS. Either one ends the mirror, and the bridge dismisses the page and does not show it again. Play/Pause and volume aren't forwarded.
 - Your own `tv_remote` presses reach the page too.
 - Press to page takes about 150–250 ms.

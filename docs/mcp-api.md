@@ -23,6 +23,8 @@ Single-TV operations other than `tv_status` and `tv_history` include `screen`. O
 | `playing` | `title`, `state`, `position_s`, `duration_s` |
 | `presenting` | `page_id`, `title`, `url`, and `remote` when the page was shown with remote input |
 
+When the TV ended the last page itself, for example after Back or Home on the remote, `screen` also has `last_presentation_end` with `reason` (`ended_on_tv`), `at` and `page_id`. The next `tv_show`, or a call that takes over the presentation, removes it.
+
 Pairing uses an unknown screen snapshot. On failure the screen may be stale or unknown. Aggregate look returns top-level `screen: null`. A routing failure can have `screen.tv: null` with no `tv_id`.
 
 For example, an unqualified status call with several paired TVs has this structure. This excerpt omits device addresses and other health fields.
@@ -117,6 +119,8 @@ The bridge checks the resolved address before connecting, including after redire
 
 A show returns `data.page_id`, `data.size` and `data.transport`. A mirror reports the configured size (default `1920x1080`, also `1280x720`). Verification means the sender reported pushing frames. Recorded playback reports `video` at `1920x1080` and checks AirPlay playback. The result can have `verified: false`. Live URLs always use mirroring. Keep their server running. See [Present content](../skills/tv-use-web-apps/references/delivery.md).
 
+Back (Menu) or Home on the remote ends a mirrored page, and the bridge does not show it again. It stops the mirror and the remote watch. Later results report `screen.presenting: null` and `screen.last_presentation_end`, and `tv_page_run` returns `nothing_showing`. The same happens when the TV ends the mirror for another reason. A mirror that fails, for example after a network loss or a sender crash, restarts. A recording (`data.transport: "video"`) still reopens when the TV closes its AirPlay session.
+
 #### Remote input
 
 `remote` lets a person use the Siri Remote on a mirrored page. When `remote` is omitted, it is `tvos` for `html`, `files` and `bundle` pages, and `focus` for `url` pages.
@@ -188,7 +192,7 @@ What each remote action becomes:
 | Touch-surface Siri Remote | Click anywhere on the surface | `Enter` | Verified on tvOS 26.6.1 |
 | Touch-surface Siri Remote | Tap without a click | Nothing | By design, as in tvOS |
 | `tv_remote` and `tv_sequence` keys | left, right, up, down, select | Arrows and `Enter` | Verified on tvOS 26.6.1 |
-| Any remote | Menu, Home | Not forwarded. tvOS handles them and ends the mirror. | |
+| Any remote | Menu, Home | Not forwarded. tvOS ends the mirror, and the bridge dismisses the page. | Menu and TV presses read on tvOS 27.2. The dismissal is not yet tested on hardware. |
 | Any remote | Play/Pause, volume | Not forwarded | |
 
 A click during a touch sends only the key of the click, never an extra arrow. The swipe and flick tuning is preliminary.
@@ -198,6 +202,7 @@ To tune swipes, read the app log at the `info` level. For each finger contact th
 Limits:
 
 - Presses that the bridge sends with `tv_remote` or `tv_sequence` during the page are forwarded too.
+- With `remote: "off"` the bridge cannot see Menu or Home. If the TV then closes only the AirPlay control connection, the sender reconnects and the page can return about a second later.
 - Long presses are not tested.
 
 ### tv_page_run

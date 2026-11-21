@@ -106,6 +106,8 @@ Expose an application function for the caller, for example `window.setStep = n =
 
 Use the 1920×1080 canvas and body text of at least 28 px. Audio plays by default. Set `audio` to `mute` for any page that plays no sound. It makes the mirror faster. On a Home Assistant Green, a mirror with audio uses about one more CPU core. A muted 1080p page renders about 40% more frames, and the encoder takes about 80 ms per frame instead of 120 ms. A mirrored page keeps the TV awake past its screensaver and sleep timers. Upgrade note: `keep_awake` is gone, and a call that passes it fails with `invalid_arguments`. Dismiss the page with `tv_show {}`. The `tv_hide` alias is accepted but omitted from `tools/list`. For a specific room use `tv_show {"tv":"<room>"}`.
 
+Pressing Back (Menu) or Home on the Siri Remote ends a mirrored page. The bridge treats that as a dismissal. It stops the mirror and the remote watch, `screen.presenting` becomes `null`, and `screen.last_presentation_end` reports `"reason": "ended_on_tv"` until the next `tv_show`. The bridge does not show the page again. The same happens when the TV ends the mirror for another reason. A mirror that fails, for example after a network loss or a sender crash, still restarts. With `remote: "off"` the bridge cannot see the press. If the TV then closes only the AirPlay control connection, the sender reconnects and the page can return about a second later. Upgrade note: before, the bridge showed the page again a few seconds after the TV ended the mirror.
+
 ### Remote input on a page
 
 A person can use the Siri Remote on a mirrored page. When `tv_show` omits `remote`, it is `tvos` for `html`, `files` and `bundle` pages, and `focus` for `url` pages.
@@ -147,7 +149,7 @@ What each remote action becomes:
 | Touch-surface Siri Remote | Click anywhere on the surface | `Enter` | Verified on tvOS 26.6.1 |
 | Touch-surface Siri Remote | Tap without a click | Nothing | By design, as in tvOS |
 | `tv_remote` and `tv_sequence` keys | left, right, up, down, select | Arrows and `Enter` | Verified on tvOS 26.6.1 |
-| Any remote | Menu, Home | Not forwarded. tvOS handles them and ends the mirror. | |
+| Any remote | Menu, Home | Not forwarded. tvOS ends the mirror, and the bridge dismisses the page. | Menu and TV presses read on tvOS 27.2. The dismissal is not yet tested on hardware. |
 | Any remote | Play/Pause, volume | Not forwarded | |
 
 A click during a touch sends only the key of the click, never an extra arrow. The swipe and flick tuning is preliminary.
@@ -174,7 +176,7 @@ Mirroring defaults to a 1920×1080 canvas at 10 fps and 4000 kbps. Set `mirror_s
 
 Upgrade note: `mirror_fps_muted` is a new option. After the update, an install with `mirror_fps` below 15 mirrors muted pages at 15 fps. Set `mirror_fps_muted` to `0` to keep the old behavior.
 
-Live URLs always use mirroring. For recorded presentations, `tv_show` reports `data.transport` equal to `"video"` and may return `verified: false` while the clip is rendering. Static pages use a still frame for the duration of their audio, or 60 seconds without a finite audio track. Animated pages and page audio take time to record before playback begins. The clip loops while shown. If the TV closes the AirPlay session early, the bridge reopens it near the last playback position. Sending page data records a new clip.
+Live URLs always use mirroring. For recorded presentations, `tv_show` reports `data.transport` equal to `"video"` and may return `verified: false` while the clip is rendering. Static pages use a still frame for the duration of their audio, or 60 seconds without a finite audio track. Animated pages and page audio take time to record before playback begins. The clip loops while shown. If the TV closes the AirPlay session early, the bridge reopens it near the last playback position. In this mode the bridge cannot yet tell Back or Menu from a closed session, so the clip reopens after them too. Sending page data records a new clip.
 
 For `tv_play {"media":"https://example.org/clip.mp4"}`, replace the example URL with an HTTP or HTTPS media URL the Apple TV can fetch. Normal EOF finishes playback. The bridge can make up to two further playback attempts, using the observed or estimated position.
 

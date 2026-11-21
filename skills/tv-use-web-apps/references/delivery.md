@@ -49,7 +49,7 @@ Then call `tv_show {"bundle": "<id>"}`. An invalid ZIP within the request size l
 
 ## How long a page stays
 
-- A presentation continues after the agent disconnects. Hiding it, showing another page, starting playback, opening an app or changing power can end it. Another room can take its mirror slot with `replace: true`. Restarting the bridge also ends it.
+- A presentation continues after the agent disconnects. Hiding it, showing another page, starting playback, opening an app or changing power can end it. Back (Menu) or Home on the remote also ends it, and the bridge does not show it again. Later results report `screen.presenting: null` and `screen.last_presentation_end`. Another room can take its mirror slot with `replace: true`. Restarting the bridge also ends it.
 - The stage crossfades between embedded pages. Top-level navigation and transport changes can restart or reload the browser. For small changes, call the page’s functions with `tv_page_run`.
 - `html`, `files` and `bundle` pages are stored on the HA host, so they outlive your session. When the cache is full, the bridge deletes the oldest pages that are not on screen. If a stored bundle is gone, `tv_show` returns `page_unreachable` with "The bundle is unavailable"; upload it again.
 - A `url` page needs your server for as long as it is on screen. If the content must outlive your session, send `html` or `files` instead.

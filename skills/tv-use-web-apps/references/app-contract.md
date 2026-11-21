@@ -86,7 +86,7 @@ Every app works with the Siri Remote as well as by voice. `tv_show` shows a page
 
 - Make every action a person can take a real `<button>`, or an element with `tabindex="0"`, that `click` handles. Enter activates it. Nothing is hover-only.
 - Lay focusable items out in rows and grids. Wrap each row in an element with `data-tv-group`. Leave about 8% spare room around each one, because the focused item grows 6%; no `overflow: hidden` on its parent.
-- Menu ends the mirror, so put an on-screen Back button wherever a view has a way back.
+- Menu (Back) on the remote ends the page for good: the bridge dismisses it and does not show it again. Put an on-screen Back button wherever a view has a way back.
 - Route each remote action through the same `PATCH` handler a voice patch uses, so voice and remote stay in step. Then call `tv.input(action, detail)`, such as `tv.input("pick", {item: 3})`, so the agent sees what the person did.
 - After each render, keep focus on a sensible item: the current step's Next button, the focused card, the first answer.
 - Pages mostly for reading or glancing (an answer, a dashboard) show no focus ring until the first remote press. Pages built for choosing may focus their first control at once: give it `autofocus`. It shows focus when the page appears, and the first arrow moves from it.

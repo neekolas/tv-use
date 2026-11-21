@@ -54,6 +54,7 @@ Local connection, from a Mac at home:
 - **Someone is watching:** `tv_look` shows playback you did not start. Ask once before replacing it.
 - **Recorded mode:** `tv_show` returned `data.transport: "video"`. The page cannot change; show the final page instead.
 - **A native app is on screen:** there is no page. Let the app show the result and check it with `tv_look`.
+- **The user left the page:** `screen.presenting` is null and `screen.last_presentation_end.reason` is `ended_on_tv`. Back or Home on the remote, or the TV itself, ended it. Do not show it again unless the user asks.
 - **`mirror_busy`:** ask before `replace: true`.
 - **A call fails:** read `error.fix` and try it once, silently. If it fails again, say so in one sentence.
 
