@@ -562,6 +562,8 @@ class TvpipeSender(Sender):
                     await cleanup
                     raise
             if ended:
+                # A start() that waited for the cleanup sees the finished run now.
+                self.changed.set()
                 return
             failed_host = host
             await asyncio.sleep(delay)

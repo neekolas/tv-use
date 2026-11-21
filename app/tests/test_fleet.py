@@ -116,6 +116,23 @@ async def test_routing_and_independent_locks(tmp_path):
     assert (await fleet.call("tv_look", {"tv": "missing"}))["error"]["code"] == "tv_not_found"
 
 
+async def test_routed_results_report_a_page_that_the_tv_ended(tmp_path):
+    fleet = rooms(tmp_path)
+    living = fleet.select("Living Room")
+    mirror = living.operations.live_mirror
+    await living.stage.show("a" * 32, "/c/a/index.html")
+    living.operations.presenter = mirror
+    await living.tools.dismiss_ended(mirror, mirror.runner, "a" * 32, ["tvpipe reported that the TV ended the session"])
+    assert living.stage.page is None
+    end = {"reason": "ended_on_tv", "at": living.tools.presentation_end["at"], "page_id": "a" * 32}
+    run = await fleet.call("tv_page_run", {"tv": "Living Room", "script": "document.title"})
+    assert run["error"]["code"] == "nothing_showing"
+    look = await fleet.call("tv_look", {"tv": "Living Room"})
+    for result in (run, look):
+        assert result["screen"]["tv"] == "Living Room" and result["screen"]["presenting"] is None
+        assert result["screen"]["last_presentation_end"] == end
+
+
 async def test_fleet_maps_the_keys_alias_before_routing(tmp_path):
     fleet = rooms(tmp_path)
     living = fleet.select("Living Room")

@@ -64,8 +64,9 @@ class AutoSender(Sender):
         if self.active is owner:
             self.update(status | {"configured_mode": "auto"})
             if owner is self.mirror and not status["ok"] and self.stage_url:
-                # The mirror had started successfully, then a receiver-ended
-                # restart failed. That failure counts as the first of the two.
+                # The mirror had started successfully, then its restart after a
+                # failure failed. That failure counts as the first of the two.
+                # A mirror that the TV ended reports an ok "ended" state instead.
                 stage_url, self.stage_url = self.stage_url, None
                 self.recovery = asyncio.create_task(self._recover(stage_url))
 

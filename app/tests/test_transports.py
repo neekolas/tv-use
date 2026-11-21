@@ -325,8 +325,9 @@ async def test_tv_end_dismisses_the_page_and_a_later_show_works(
             # The observer reports the press about a second before tvpipe notices the closed connection.
             service.tools.remote_input.on_event({"event": "button", "key": press})
         (root / "end-1").touch()
-        await wait_until(lambda: service.stage.page is None, 6)
-        await wait_until(lambda: service.sender.status()["state"] == "idle", 6)
+        # The dismissal records the end after tv_hide returns.
+        await wait_until(lambda: service.tools.presentation_end is not None, 6)
+        assert service.stage.page is None and service.sender.status()["state"] == "idle"
         assert service.tools.presentation_end == {
             "reason": "ended_on_tv", "at": service.tools.presentation_end["at"], "page_id": page_id
         }
