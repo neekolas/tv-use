@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 from unittest.mock import AsyncMock
 
 from jsonschema import Draft202012Validator
@@ -122,9 +123,11 @@ async def test_routed_results_report_a_page_that_the_tv_ended(tmp_path):
     mirror = living.operations.live_mirror
     await living.stage.show("a" * 32, "/c/a/index.html")
     living.operations.presenter = mirror
-    await living.tools.dismiss_ended(mirror, mirror.runner, "a" * 32, ["tvpipe reported that the TV ended the session"])
-    assert living.stage.page is None
-    end = {"reason": "ended_on_tv", "at": living.tools.presentation_end["at"], "page_id": "a" * 32}
+    end = {"reason": "ended_on_tv", "at": "2026-11-21T19:00:00+00:00", "page_id": "a" * 32}
+    await living.tools.dismiss_ended(
+        mirror, mirror.runner, end, time.monotonic(), ["tvpipe reported that the TV ended the session"]
+    )
+    assert living.stage.page is None and living.operations.presentation_end == end
     run = await fleet.call("tv_page_run", {"tv": "Living Room", "script": "document.title"})
     assert run["error"]["code"] == "nothing_showing"
     look = await fleet.call("tv_look", {"tv": "Living Room"})
@@ -162,8 +165,10 @@ async def test_mirror_admission_replacement_and_hide(tmp_path, limit):
         assert second["error"]["code"] == "mirror_busy"
         assert "Previous call" not in second["evidence"]
         assert second["data"]["holders"][0]["name"] == "Living Room" and a.stage.page
+        # An eviction takes over the presentation, so an end record of the Living Room does not survive it.
+        a.operations.presentation_end = {"reason": "ended_on_tv", "at": "2026-11-21T19:00:00+00:00", "page_id": "old"}
         second = await fleet.call("tv_show", {"tv": "Bedroom", "html": "2", "remote": "off", "replace": True})
-        assert a.stage.page is None
+        assert a.stage.page is None and a.operations.presentation_end is None
     else:
         assert a.stage.page
     assert second["ok"] and second["screen"]["tv"] == "Bedroom"

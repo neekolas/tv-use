@@ -221,20 +221,30 @@ class TvpipeSender(Sender):
             await browsers.sweep(
                 self.proc.pid if self.proc and self.proc.returncode is None else None
             )
-        if not self.runner or self.runner.done():
-            browsers.log_memory("before mirror")
-            self.url, self.running_audio = stage_url, self.audio
-            if self.profile is None:
-                self.profile = tempfile.TemporaryDirectory(prefix="atv-mirror-")
-            self.problem = None
-            self.changed.clear()
-            self.runner = asyncio.create_task(self._run())
         try:
             async with asyncio.timeout(20):
-                # The run ends without a problem when the TV ends the session.
-                while not self.started and not self.problem and not self.runner.done():
-                    self.changed.clear()
-                    await self.changed.wait()
+                while True:
+                    if self.runner and not self.runner.done() and self.status()["state"] == "ended":
+                        # The TV ended the last page, and its run is still cleaning up, which can take
+                        # seconds. Wait for the cleanup, then start a new run below.
+                        await asyncio.shield(self.runner)
+                    created = not self.runner or self.runner.done()
+                    if created:
+                        browsers.log_memory("before mirror")
+                        self.url, self.running_audio = stage_url, self.audio
+                        if self.profile is None:
+                            self.profile = tempfile.TemporaryDirectory(prefix="atv-mirror-")
+                        self.problem = None
+                        self.changed.clear()
+                        self.runner = asyncio.create_task(self._run())
+                    # The run ends without a problem when the TV ends the session.
+                    while not self.started and not self.problem and not self.runner.done():
+                        self.changed.clear()
+                        await self.changed.wait()
+                    # The TV can also end a run that this show joined while the show waited for it.
+                    # Only a run that this show started counts as this show's own end.
+                    if self.started or self.problem or created:
+                        break
         except TimeoutError as exc:
             raise Fault(
                 "sender_failed",
@@ -245,7 +255,13 @@ class TvpipeSender(Sender):
         if self.problem:
             raise self.problem
         if not self.started:
-            raise Fault("presentation_ended", "The TV ended the mirror.", "Show the page again.")
+            # The TV ended the new run as soon as it started.
+            raise Fault(
+                "sender_failed",
+                "The TV ended the mirror as it started.",
+                "Read tv_look, then show the page again.",
+                True,
+            )
         if self.url != stage_url:
             page = await self.browser_page()
             try:

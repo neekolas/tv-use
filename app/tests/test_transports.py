@@ -3,6 +3,7 @@ import base64
 import json
 import logging
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -15,7 +16,7 @@ from mcp.client.streamable_http import streamable_http_client
 
 from atv_bridge_app.present.sender import STAGE_URL
 from atv_bridge_app.present.tvpipe import MachineLines, SentRate, TvpipeSender, log_event
-from atv_bridge_app.state import Fault
+from atv_bridge_app.state import Fault, now
 from atv_bridge_app.tools.contract import SCHEMAS, INSTRUCTIONS
 
 
@@ -143,11 +144,13 @@ framing = sys.stdin.buffer.read()
 assert framing.startswith(b'SLRW') and framing.endswith(b'{"type":"stop"}')
 with (root / 'stops').open('a') as f:
     f.write('stop\\n')
+time.sleep(EXIT_DELAY)
 """
 
 
-def fake_tvpipe(path, events):
-    return executable(path, f"END_EVENTS = {events!r}\n" + FAKE_TVPIPE)
+def fake_tvpipe(path, events, exit_delay=0):
+    """exit_delay is how long the fake takes to exit after its stop record."""
+    return executable(path, f"END_EVENTS = {events!r}\nEXIT_DELAY = {exit_delay!r}\n" + FAKE_TVPIPE)
 
 
 def lines(path):
@@ -298,10 +301,12 @@ async def test_sender_tv_end_stops_without_restart(service, tmp_path, events, pr
 
 
 @pytest.mark.parametrize(
-    "events,press", [(TV_ENDED, None), (TV_CLOSED_CONTROL, "menu")], ids=["receiver-ended", "lost-after-menu"]
+    "events,press,reason",
+    [(TV_ENDED, None, "ended_on_tv"), (TV_CLOSED_CONTROL, "menu", "ended_on_tv"), (TV_ENDED, "tool", "ended_by_tool")],
+    ids=["receiver-ended", "lost-after-menu", "tool-menu"],
 )
 async def test_tv_end_dismisses_the_page_and_a_later_show_works(
-    service, aiohttp_client, tmp_path, caplog, events, press
+    service, aiohttp_client, tmp_path, caplog, events, press, reason
 ):
     caplog.set_level(logging.INFO, "atv_bridge_app.tools.public")
     service.sender.executable = fake_tvpipe(tmp_path / "show-sender", events)
@@ -321,15 +326,18 @@ async def test_tv_end_dismisses_the_page_and_a_later_show_works(
         first = await show(sockets[0], "<h1>One</h1>")
         page_id = first["data"]["page_id"]
         assert first["ok"] and first["screen"]["presenting"]["page_id"] == page_id
-        if press:
+        if press == "tool":
+            # The agent's own Back. tvOS ends the mirror as it does for the remote.
+            assert (await service.tools.call("tv_remote", {"keys": ["menu"]}))["ok"]
+        elif press:
             # The observer reports the press about a second before tvpipe notices the closed connection.
             service.tools.remote_input.on_event({"event": "button", "key": press})
         (root / "end-1").touch()
         # The dismissal records the end after tv_hide returns.
-        await wait_until(lambda: service.tools.presentation_end is not None, 6)
+        await wait_until(lambda: service.operations.presentation_end is not None, 6)
         assert service.stage.page is None and service.sender.status()["state"] == "idle"
-        assert service.tools.presentation_end == {
-            "reason": "ended_on_tv", "at": service.tools.presentation_end["at"], "page_id": page_id
+        assert service.operations.presentation_end == {
+            "reason": reason, "at": service.operations.presentation_end["at"], "page_id": page_id
         }
         # The remote watch stopped with the page, and no restart followed.
         assert service.tools.remote_input.status() is None
@@ -340,20 +348,98 @@ async def test_tv_end_dismisses_the_page_and_a_later_show_works(
         run = await service.tools.call("tv_page_run", {"script": "document.title"})
         assert run["error"]["code"] == "nothing_showing"
         assert run["screen"]["presenting"] is None
-        assert run["screen"]["last_presentation_end"] == service.tools.presentation_end
+        assert run["screen"]["last_presentation_end"] == service.operations.presentation_end
         look = await service.tools.call("tv_look", {})
         assert look["screen"]["presenting"] is None
-        assert look["screen"]["last_presentation_end"]["reason"] == "ended_on_tv"
+        assert look["screen"]["last_presentation_end"]["reason"] == reason
 
         sockets.append(await client.ws_connect("/stage/ws", origin="http://127.0.0.1:8766"))
         second = await show(sockets[1], "<h1>Two</h1>")
         assert second["ok"] and second["screen"]["presenting"]["page_id"] == second["data"]["page_id"]
-        assert "last_presentation_end" not in second["screen"] and service.tools.presentation_end is None
+        assert "last_presentation_end" not in second["screen"] and service.operations.presentation_end is None
         assert len(lines(root / "launches")) == 2 and service.sender.status()["state"] == "showing"
     finally:
         for socket in sockets:
             await socket.close()
         assert (await service.tools.call("tv_hide", {}))["ok"]
+
+
+async def test_a_show_that_waits_while_the_tv_ends_the_mirror_starts_a_new_one(service, aiohttp_client, tmp_path):
+    # The TV ends page A while tv_show B holds the stage lock before its mirror start, as a URL probe or a
+    # bundle upload does. tvpipe takes 1.5 s to exit, so B's start finds A's run still cleaning up.
+    service.sender.executable = fake_tvpipe(tmp_path / "slow-exit", TV_ENDED, exit_delay=1.5)
+    service.sender.restart_delay = 0.01
+    service.sender.browser_page = AsyncMock()  # The machine-protocol fixture has no Chromium.
+    root = tmp_path / "tvpipe"
+    client = await aiohttp_client(service.stage.app())
+    socket = await client.ws_connect("/stage/ws", origin="http://127.0.0.1:8766")
+
+    async def loaded(call):
+        page = await socket.receive_json(timeout=4)
+        await socket.send_json({"type": "ready", "page_id": page["page_id"], "revision": page["revision"]})
+        return await asyncio.wait_for(call, 10)
+
+    release = asyncio.Event()
+    put = service.stage.store.put
+
+    async def held_put(**kwargs):
+        await release.wait()
+        return await put(**kwargs)
+
+    try:
+        first = await loaded(asyncio.create_task(service.tools.call("tv_show", {"html": "<h1>A</h1>"})))
+        assert first["ok"]
+        service.stage.store.put = held_put
+        call = asyncio.create_task(service.tools.call("tv_show", {"html": "<h1>B</h1>"}))
+        await wait_until(service.stage.lock.locked)
+        (root / "end-1").touch()
+        await wait_until(lambda: service.sender.status()["state"] == "ended")
+        release.set()
+        second = await loaded(call)
+        await asyncio.gather(*service.tools.dismissals)
+        assert second["ok"], second
+        # B took over after the TV ended A, so A's dismissal does not hide B, and B supersedes A's end.
+        assert service.stage.page["page_id"] == second["data"]["page_id"] != first["data"]["page_id"]
+        assert service.operations.presentation_end is None
+        assert "last_presentation_end" not in second["screen"]
+        assert len(lines(root / "launches")) == 2 and lines(root / "stops") == ["stop"]
+        assert service.sender.status()["state"] == "showing"
+    finally:
+        release.set()
+        await socket.close()
+        assert (await service.tools.call("tv_hide", {}))["ok"]
+
+
+async def test_a_takeover_clears_the_end_record_and_a_later_end_is_not_recorded(service):
+    mirror = service.operations.live_mirror
+    service.operations.presenter = mirror
+
+    async def dismissed(page_id, ended_at=None):
+        await service.stage.show(page_id, f"/c/{page_id}/index.html")
+        end = {"reason": "ended_on_tv", "at": now(), "page_id": page_id}
+        await service.tools.dismiss_ended(mirror, mirror.runner, end, ended_at or time.monotonic(), ["test"])
+        return end
+
+    end = await dismissed("a" * 32)
+    assert service.operations.presentation_end == end
+    # B takes over and then fails. The failure hides B, and A's end does not come back.
+    mirror.start = AsyncMock(side_effect=Fault("sender_failed", "The mirror did not start.", "Check AirPlay.", True))
+    failed = await service.tools.call("tv_show", {"html": "<h1>B</h1>", "remote": "off"})
+    assert failed["error"]["code"] == "page_unreachable" and service.stage.page is None
+    assert service.operations.presentation_end is None and "last_presentation_end" not in failed["screen"]
+    # A call that takes over with no page showing clears the record too.
+    end = await dismissed("c" * 32)
+    assert service.operations.presentation_end == end
+    await service.tools.takeover()
+    assert service.operations.presentation_end is None
+    # An end from before the last takeover is stale. Its dismissal neither hides the page nor records it.
+    ended_at = time.monotonic()
+    async with service.stage.lock:
+        service.operations.take_over()
+    await dismissed("d" * 32, ended_at)
+    assert service.stage.page["page_id"] == "d" * 32 and service.operations.presentation_end is None
+    async with service.stage.lock:
+        await service.stage.hide()
 
 
 def test_sent_rate_logs_pushed_frames(caplog):

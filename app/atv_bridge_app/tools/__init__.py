@@ -1,5 +1,6 @@
 import asyncio
 import re
+import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -105,6 +106,14 @@ class Tools:
         self.observer = observer
         self.state = state
         self.verify_timeout = verify_timeout
+        # Why the TV ended the last page, reported as screen.last_presentation_end. It changes only under the
+        # stage lock: a dismissal sets it, and a new page or any other hide takes over and clears it.
+        self.presentation_end = None
+        self.taken_over = 0.0  # Monotonic time of the last takeover. An end from before it is stale.
+
+    def take_over(self):
+        """Call under the stage lock when a new page or a hide takes the screen."""
+        self.presentation_end, self.taken_over = None, time.monotonic()
 
     async def tv_health(self):
         """Read bridge connectivity, access checks and protocol pairing status."""
@@ -449,6 +458,8 @@ class Tools:
                     await previous.stop()
             self.presenter = sender
             self.live_mirror.audio = audio
+            # The new page takes over here. A failure below hides it, and the old end record stays cleared.
+            self.take_over()
             await self.stage.show(
                 page_id, target, title, url=url, audio=audio,
                 **({"remote": remote} if remote != "off" else {}),
@@ -509,11 +520,16 @@ class Tools:
                     sender.fail(exc)
                 raise
 
-    async def tv_hide(self, still=None):
-        """Stop presenting and close the stage browser. With `still`, only if it returns True under the stage lock."""
+    async def tv_hide(self, still=None, end=None):
+        """Stop presenting and close the stage browser. With `still`, only if it returns True under the stage lock.
+        A dismissal passes `end`, the record of why the TV ended the page. Any other hide takes over and clears it."""
         async with self.stage.lock:
             if still and not still():
                 return None
+            if end:
+                self.presentation_end = end
+            else:
+                self.take_over()
             await getattr(self, "presenter", self.sender).stop()
             await self.stage.hide()
         return success("hidden", ["Sender stopped"])

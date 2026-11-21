@@ -2,7 +2,9 @@
 
 import asyncio
 import logging
+import math
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
@@ -12,7 +14,7 @@ from jsonschema import Draft202012Validator
 from ..live import TAILNET_DNS_FIX
 from ..present.interaction import PageInteraction
 from ..present.media import MediaPlayback
-from ..present.remote_input import RemoteInput
+from ..present.remote_input import EXIT_WINDOW_S, EXITS, RemoteInput
 from ..state import Fault, classify, now, reworded
 from . import link_info, playback_identity
 from .contract import NO_SCREEN, RUN_HELP, SCHEMAS, UNKNOWN, canonical, checked, outcome, public_error, schema
@@ -48,9 +50,8 @@ class PublicTools:
         self.media = MediaPlayback(self.engine)
         self.page_interaction = PageInteraction(ops)
         self.remote_input = RemoteInput(ops, self.page_interaction)
-        # Set when the TV ended the last page itself, reported as screen.last_presentation_end.
-        # The next tv_show or takeover clears it.
-        self.presentation_end = None
+        # Until this monotonic time, an end of the page follows a Menu or Home that a tool sent.
+        self.tool_exit_until = 0.0
         self.dismissals = set()
         if mirror := getattr(ops, "live_mirror", None):
             mirror.exit_press = self.remote_input.exit_press
@@ -60,29 +61,49 @@ class PublicTools:
         """Dismiss the page when the TV ends its mirror, as the person did with Menu or Home."""
         if status.get("state") != "ended" or not self.stage.page:
             return
-        page_id = self.stage.page["page_id"]
-        task = asyncio.create_task(self.dismiss_ended(mirror, mirror.runner, page_id, status["evidence"]))
+        # Decide the reason now. The dismissal can wait seconds for the stage lock.
+        reason = "ended_by_tool" if time.monotonic() <= self.tool_exit_until else "ended_on_tv"
+        end = {"reason": reason, "at": now(), "page_id": self.stage.page["page_id"]}
+        task = asyncio.create_task(
+            self.dismiss_ended(mirror, mirror.runner, end, time.monotonic(), status["evidence"])
+        )
         self.dismissals.add(task)
         task.add_done_callback(self.dismissals.discard)
 
-    async def dismiss_ended(self, mirror, run, page_id, evidence):
+    async def dismiss_ended(self, mirror, run, end, ended_at, evidence):
         def current():
-            # A newer tv_show that started its own mirror run, or another presenter, keeps its page.
+            # A page or hide that took over after the end, a newer mirror run, or another presenter keeps the screen.
             presenter = getattr(self.ops, "presenter", self.ops.sender)
-            return mirror.runner is run and getattr(presenter, "active", presenter) is mirror
+            return (
+                self.ops.taken_over < ended_at
+                and mirror.runner is run
+                and getattr(presenter, "active", presenter) is mirror
+            )
 
         try:
-            if not await self.ops.tv_hide(still=current):
+            if not await self.ops.tv_hide(still=current, end=end):
                 return
         except Exception:  # noqa: BLE001 - A background task has no caller to report to.
-            _LOG.exception("Could not dismiss page %s after the TV ended its mirror", page_id)
+            _LOG.exception("Could not dismiss page %s after the TV ended its mirror", end["page_id"])
             return
-        self.presentation_end = {"reason": "ended_on_tv", "at": now(), "page_id": page_id}
         # tv_page_run and failed calls report the last screen without reading it again.
         self.last_screen["presenting"] = None
-        self.last_screen["last_presentation_end"] = self.presentation_end
-        _LOG.info("The TV ended the mirror of page %s (%s). The page is dismissed and is not shown again.",
-                  page_id, "; ".join(evidence))
+        self.last_screen["last_presentation_end"] = end
+        _LOG.info("The TV ended the mirror of page %s (%s, %s). The page is dismissed and is not shown again.",
+                  end["page_id"], "; ".join(evidence), end["reason"])
+
+    @contextmanager
+    def tool_exit(self, keys):
+        """Mark a Menu or Home that a tool sends while a page shows, so that the end it causes reads ended_by_tool."""
+        marked = bool(self.stage.page) and any(key in EXITS for key in keys)
+        if marked:
+            # The TV can end the mirror before the send returns.
+            self.tool_exit_until = math.inf
+        try:
+            yield
+        finally:
+            if marked:
+                self.tool_exit_until = time.monotonic() + EXIT_WINDOW_S
 
     async def snapshot(self, focus=None, read_focus=True, observation=None, *, status=None):
         if status is None:
@@ -118,8 +139,8 @@ class PublicTools:
         }
         if page and (remote := self.remote_input.status()):
             self.last_screen["presenting"]["remote"] = remote
-        if not page and self.presentation_end:
-            self.last_screen["last_presentation_end"] = self.presentation_end
+        if not page and self.ops.presentation_end:
+            self.last_screen["last_presentation_end"] = self.ops.presentation_end
         return self.last_screen.copy()
 
     def failure(self, name, fault):
@@ -258,10 +279,13 @@ class PublicTools:
             self.lock.release()
 
     async def takeover(self):
-        self.presentation_end = None
         await self.media.stop()
         if self.stage.page:
             await self.ops.tv_hide()
+        else:
+            # Nothing to hide, but the call still takes over, so an end record no longer applies.
+            async with self.stage.lock:
+                self.ops.take_over()
 
     async def tv_power(self, on):
         """Wake or sleep the receiver explicitly. Ends its bridge presentation, requests power and checks the reported state.
@@ -506,7 +530,8 @@ class PublicTools:
         return result
 
     async def press(self, key, hold=0, *, switching_app=False):
-        return checked(await self.ops.tv_press([key], hold_ms=hold, settle_ms=self.settle_ms, switching_app=switching_app))
+        with self.tool_exit([key]):
+            return checked(await self.ops.tv_press([key], hold_ms=hold, settle_ms=self.settle_ms, switching_app=switching_app))
 
     @staticmethod
     def changed(before, after):
@@ -524,7 +549,8 @@ class PublicTools:
         return after
 
     async def send_keys(self, keys, hold, path):
-        result = await self.ops.tv_press(keys, hold_ms=hold, settle_ms=self.settle_ms, gap_ms=KEY_GAP_MS)
+        with self.tool_exit(keys):
+            result = await self.ops.tv_press(keys, hold_ms=hold, settle_ms=self.settle_ms, gap_ms=KEY_GAP_MS)
         if not result["ok"]:
             path += keys[: result.get("confirmed_keys", 0)]
         try:
@@ -908,7 +934,6 @@ class PublicTools:
         Inspect data.transport and screen.presenting. verified means frames were sent or playback was observed. Use tv_page_run to read or change a live page.
         Siri Remote arrows and Select reach a mirrored page by default: remote is "tvos" for html, files and bundle, and "focus" for url. Lay out a "tvos" page in rows and grids. Set remote to "off" to send no input. data.remote.state is often "starting"; later results report it in screen.presenting.remote.
         For example, tv_show {"html":"<h1>Hello</h1>"}."""
-        self.presentation_end = None
         await self.media.stop()
         if all(source is None for source in (url, html, files, bundle)):
             await self.ops.tv_hide()
