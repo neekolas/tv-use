@@ -444,6 +444,13 @@ async def test_live_page_frame_fallback_and_return(
     assert (await call("tv_show", {}))["screen"]["presenting"] is None
 
 
+async def test_show_rejects_keep_awake(service):
+    """Hardware finding: the wake lock stayed in the host's headless Chromium and never reached the TV.
+    An active mirror alone kept tvOS awake for 18 minutes, past its screensaver and sleep timers."""
+    r = await service.tools.call("tv_show", {"html": "<h1>x</h1>", "keep_awake": True})
+    assert r["error"]["code"] == "invalid_arguments" and service.stage.page is None
+
+
 async def test_missing_bundle_bad_inline_and_http_error(ui, aiohttp_server):
     service, _, _ = ui
     call = service.tools.call

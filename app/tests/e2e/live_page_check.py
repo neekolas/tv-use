@@ -403,7 +403,7 @@ os.execvp('tvpipe',['tvpipe',*args,'--port','0'])
             if benchmark and label != "live frame":
                 continue
             options = dict(
-                url=None, html=None, files=None, bundle=None, title=label, audio="mute", keep_awake=True
+                url=None, html=None, files=None, bundle=None, title=label, audio="mute"
             )
             await ops.present(**(options | source))
             if benchmark:

@@ -863,8 +863,7 @@ class PublicTools:
         return await self.tv_show()
 
     async def tv_show(
-        self, url=None, html=None, files=None, bundle=None, title=None, audio="play", keep_awake=True,
-        remote=None,
+        self, url=None, html=None, files=None, bundle=None, title=None, audio="play", remote=None,
     ):
         """Present a page, or dismiss it by omitting the source. Can wake the TV and replaces its bridge media or page.
         The HA host renders the page and mirrors it or plays a recording. Live URLs use a mirror. The default fleet limit is one active mirror.
@@ -885,7 +884,6 @@ class PublicTools:
             bundle=bundle,
             title=title,
             audio=audio,
-            keep_awake=keep_awake,
             remote=remote,
         )
         mode = result["mode"]

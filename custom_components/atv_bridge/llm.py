@@ -133,7 +133,6 @@ def async_get_tools(
                     optional("title"): str,
                     optional("audio"): str,
                     optional("replace"): bool,
-                    optional("keep_awake"): bool,
                 },
             ),
             BridgeTool(

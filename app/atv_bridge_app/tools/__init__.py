@@ -424,7 +424,7 @@ class Tools:
             image={"mimeType": "image/png", "data": capture["png"]},
         )
 
-    async def present(self, *, url, html, files, bundle, title, audio, keep_awake, remote="off"):
+    async def present(self, *, url, html, files, bundle, title, audio, remote="off"):
         async with self.stage.lock:
             if files is not None:
                 bundle = await self.stage.store.put_files(files)
@@ -450,7 +450,7 @@ class Tools:
             self.presenter = sender
             self.live_mirror.audio = audio
             await self.stage.show(
-                page_id, target, title, url=url, audio=audio, keep_awake=keep_awake,
+                page_id, target, title, url=url, audio=audio,
                 **({"remote": remote} if remote != "off" else {}),
             )
             try:
@@ -472,10 +472,6 @@ class Tools:
                     await sender.start(url)
                     direct = True
                     self.stage.direct_browser = sender
-                    if keep_awake and sender.page:
-                        await sender.page.evaluate(
-                            "navigator.wakeLock?.request('screen').then(() => true).catch(() => false)"
-                        )
                 active = getattr(sender, "active", sender)
                 if active.mode == "mirror":
                     verified = await active.confirm_frame()

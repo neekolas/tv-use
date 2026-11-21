@@ -104,7 +104,7 @@ A host without a port grants every TCP port on that host. Use brackets for an IP
 
 Expose an application function for the caller, for example `window.setStep = n => document.querySelector('h1').textContent = 'Step ' + n`. Invoke it with `tv_page_run {"script":"window.setStep(arg)","arg":2}`.
 
-Use the 1920×1080 canvas and body text of at least 28 px. Audio plays by default. Set `audio` to `mute` for any page that plays no sound. It makes the mirror faster. On a Home Assistant Green, a mirror with audio uses about one more CPU core. A muted 1080p page renders about 40% more frames, and the encoder takes about 80 ms per frame instead of 120 ms. `keep_awake` defaults to true and requests a browser screen wake lock. Dismiss the page with `tv_show {}`. The `tv_hide` alias is accepted but omitted from `tools/list`. For a specific room use `tv_show {"tv":"<room>"}`.
+Use the 1920×1080 canvas and body text of at least 28 px. Audio plays by default. Set `audio` to `mute` for any page that plays no sound. It makes the mirror faster. On a Home Assistant Green, a mirror with audio uses about one more CPU core. A muted 1080p page renders about 40% more frames, and the encoder takes about 80 ms per frame instead of 120 ms. A mirrored page keeps the TV awake past its screensaver and sleep timers. Upgrade note: `keep_awake` is gone, and a call that passes it fails with `invalid_arguments`. Dismiss the page with `tv_show {}`. The `tv_hide` alias is accepted but omitted from `tools/list`. For a specific room use `tv_show {"tv":"<room>"}`.
 
 ### Remote input on a page
 

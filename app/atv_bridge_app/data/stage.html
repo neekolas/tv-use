@@ -8,13 +8,7 @@ iframe { position:absolute; inset:0; width:100%; height:100%; border:0; opacity:
 iframe.visible { opacity:1; }
 </style>
 <body><script>
-let current, pending, pageId, revision, wakeLock;
-async function keepAwake(enabled) {
-  try {
-    await wakeLock?.release();
-    wakeLock = enabled ? await navigator.wakeLock?.request("screen") : null;
-  } catch {}
-}
+let current, pending, pageId, revision;
 function connect() {
   const ws = new WebSocket("ws://" + location.host + "/stage/ws" + location.search);
   const reply = event => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(event)); };
@@ -25,7 +19,6 @@ function connect() {
         reply({type:"ready", page_id:pageId, revision});
         return;
       }
-      keepAwake(msg.keep_awake ?? true);
       pending?.remove();
       const frame = pending = document.createElement("iframe");
       frame.dataset.pageId = msg.page_id;

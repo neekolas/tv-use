@@ -111,7 +111,7 @@ Supply one source to present, or just the room selector (or `{}` with a default)
 | `{"bundle":"<bundle ID>"}` | The ID from a ZIP upload |
 | `{"url":"https://example.org/"}` | A live HTTP or HTTPS page reachable from the HA host |
 
-Optional fields are `title`, `audio` (`play` by default, or `mute`), `remote` (see [Remote input](#remote-input)), `keep_awake` (defaults to true and requests a browser wake lock) and `replace` (defaults to false). Use `audio: "mute"` for every page that plays no sound. On a Home Assistant Green the mirror then uses about one CPU core less and sends about 9 fps instead of 7 at 1080p. The default mirror capacity is one. If `mirror_busy` names other rooms in `data.holders`, `replace: true` can stop the oldest holder before starting the new presentation.
+Optional fields are `title`, `audio` (`play` by default, or `mute`), `remote` (see [Remote input](#remote-input)) and `replace` (defaults to false). Use `audio: "mute"` for every page that plays no sound. On a Home Assistant Green the mirror then uses about one CPU core less and sends about 9 fps instead of 7 at 1080p. The default mirror capacity is one. If `mirror_busy` names other rooms in `data.holders`, `replace: true` can stop the oldest holder before starting the new presentation.
 
 The bridge checks the resolved address before connecting, including after redirects. Public sites, reachable tailnet sites and the bridge’s active stage origins work by default. A blocked URL returns `blocked_address` with the address class and a fix. Operators can grant additional LAN destinations with `page_network_allow`.
 

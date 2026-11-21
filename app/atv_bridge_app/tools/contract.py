@@ -92,7 +92,6 @@ SHOW = {
         "on a Home Assistant Green it uses about one CPU core less and sends more frames, about 9 fps instead of 7 at 1080p.",
         default="play",
     ),
-    "keep_awake": described(BOOL, "Request a browser wake lock while presenting.", default=True),
     "remote": described(
         {"enum": ["off", "focus", "tvos"]},
         "Send Siri Remote input to a mirrored page. The default is tvos for html, files and bundle, and focus for url. "

@@ -4,7 +4,7 @@ Use the same `tv` selector for showing, updating and hiding a page. Examples omi
 
 ## Pick a source
 
-To present a page, pass exactly one source. You can also set `title` (reported in `screen.presenting`), `audio: "mute"` (default `"play"`) and `keep_awake` (default `true`, requests a browser screen wake lock).
+To present a page, pass exactly one source. You can also set `title` (reported in `screen.presenting`) and `audio: "mute"` (default `"play"`).
 
 | Source | Use when | Notes |
 |---|---|---|
