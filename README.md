@@ -2,13 +2,21 @@
 
 **Make an Apple TV a first-class device for AI agents.** tv-use lets an agent see what is on the TV, show anything it can draw, open any app at the right screen and drive the remote. It runs on Home Assistant and gives agents one MCP endpoint. It is built to be driven by an agent in a real-time voice conversation.
 
+> **Works with any agent.** Claude, Codex, or remote agents like Grok Bot and Muse can all drive your TV. They can reach it directly over your local network, or remotely via Home Assistant and Tailscale.
+
 ![A pork bulgogi recipe shown full screen on a TV, with the prompt "Say next when you're ready"](docs/images/recipe-title.jpg)
 
-## Great hardware, hard for agents
+## Imagine if Siri wasn't useless
 
-Apple TV is the best TV hardware you can buy. It is fast and quiet, and it runs every major streaming app. It is also very hard for an AI agent to use.
+Apple TV is the best TV hardware you can buy. It's fast and reliable. It isn't creepily spying on you [[1]](https://www.techradar.com/televisions/your-tv-is-a-mass-surveillance-system-says-texas-and-the-state-is-suing-lg-samsung-hisense-tcl-and-more-to-stop-it) [[2]](https://www.ucdavis.edu/news/your-smart-tv-watching-what-you-watch). It is also completely impenetrable for AI agents.
 
-Home Assistant does not fix this. Its built-in Apple TV integration is built on [pyatv](https://github.com/postlund/pyatv). pyatv's last release came out in June 2026, before tvOS 27. The fixes for AirPlay PIN pairing on tvOS 27 ([#2894](https://github.com/postlund/pyatv/pull/2894)) and for now-playing state on tvOS 27.2 ([#2953](https://github.com/postlund/pyatv/pull/2953)) are still open pull requests, along with dozens of others. And even where it works, it is missing what an agent needs most.
+Rather than wait for Siri to grow a brain, people are trying to drive their Apple TV through Home Assistant. The only problem is that it barely works. Agents can push buttons on the remote, but they can't see what is happening on screen or show content they made. Even something as simple as putting a recipe up on your TV is basically impossible today.
+
+Home Assistant's Apple TV integration is based on [pyatv](https://github.com/postlund/pyatv), which is barely maintained and doesn't properly support tvOS 27. Its last release came out in June 2026, before tvOS 27. The fixes for AirPlay PIN pairing on tvOS 27 ([#2894](https://github.com/postlund/pyatv/pull/2894)) and for now-playing state on tvOS 27.2 ([#2953](https://github.com/postlund/pyatv/pull/2953)) are still open pull requests, along with dozens of others. And even if it did support tvOS 27, it doesn't offer the full set of APIs that Apple already exposes to interact with the screen.
+
+We need something like the [Chrome DevTools Protocol](https://chromedevtools.github.io/devtools-protocol/) for Apple TV: a way to drive it remotely and see the result. That's what tv-use is.
+
+Here is what it adds over the built-in integration:
 
 | An agent needs to | Built-in integration | tv-use |
 | --- | --- | --- |
