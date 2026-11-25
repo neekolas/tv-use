@@ -1,11 +1,11 @@
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from atv_bridge_app.atv import check_reply, credentials
-from atv_bridge_app.state import State
+from atv_bridge_app.atv import Session, check_reply, credentials
+from atv_bridge_app.state import Fault, State
 from atv_bridge_app.tools import link_info
 
 
@@ -308,7 +308,6 @@ async def test_repair_control_discards_only_local_control_credentials(service):
 
 async def test_media_origin_denial_is_not_a_pairing_failure(service):
     from pyatv import exceptions
-    from atv_bridge_app.atv import Session
 
     url = "https://media.invalid/sample.mp4?private=example"
     protocol = SimpleNamespace(url_load_error=f"{url} returned HTTP 403")
@@ -324,3 +323,43 @@ async def test_media_origin_denial_is_not_a_pairing_failure(service):
     result = await service.tools.call("tv_play", {"media": url})
     assert result["error"]["code"] == "page_unreachable" and "HTTP 403" in result["error"]["message"]
     assert "private=example" not in str(result)
+
+
+async def test_player_controls_use_advertised_protocol_and_skip_magnitude():
+    from pyatv.const import FeatureName, Protocol
+
+    session = object.__new__(Session)
+    session.facade = Mock()
+    available = {
+        Protocol.MRP: {FeatureName.SetPosition, FeatureName.Stop, FeatureName.SetVolume},
+        Protocol.Companion: {FeatureName.SkipBackward, FeatureName.SkipForward, FeatureName.SetVolume},
+    }
+
+    def features(protocol):
+        return Mock(in_state=lambda state, feature: feature in available[protocol])
+
+    session.facade.features.get.side_effect = features
+    mrp, companion, audio = AsyncMock(), AsyncMock(), AsyncMock()
+    session.facade.remote_control.get.side_effect = {Protocol.MRP: mrp, Protocol.Companion: companion}.get
+    session.facade.audio.get.return_value = audio
+    await session.seek(0, None)
+    await session.seek(None, -30)
+    await session.seek(None, 15)
+    await session.hid("stop", 0)
+    from pyatv.protocols.companion.api import MediaControlCommand
+    session.api = AsyncMock()
+    session.volume_sample = (0.0, None)
+    session.api.mediacontrol_command.side_effect = [{}, {"_c": {"_vol": 0.25}}]
+    assert await session.set_volume(25) == 25
+    assert await session.read_companion_volume() == 25
+    assert session.api.mediacontrol_command.await_count == 2
+    mrp.set_position.assert_awaited_once_with(0)
+    mrp.stop.assert_awaited_once()
+    companion.skip_backward.assert_awaited_once_with(30)
+    companion.skip_forward.assert_awaited_once_with(15)
+    assert session.api.mediacontrol_command.await_args_list[0].args == (MediaControlCommand.SetVolume, {"_vol": 0.25})
+    assert session.api.mediacontrol_command.await_args_list[1].args == (MediaControlCommand.GetVolume,)
+    available[Protocol.MRP].clear()
+    with pytest.raises(Fault, match="does not support seek_absolute"):
+        await session.seek(10, None)
+    mrp.set_position.assert_awaited_once()

@@ -123,3 +123,27 @@ async def test_websocket_reconnect_and_poll(hass, bridge, entry):
         not state.attributes["supported_features"]
         & MediaPlayerEntityFeature.VOLUME_STEP
     )
+
+
+async def test_seek_stop_and_absolute_volume(hass, entry, bridge):
+    player = er.async_get(hass).async_get_entity_id("media_player", DOMAIN, f"{entry.entry_id}_player")
+    bridge.status.update(
+        playback_controls={"seek_absolute": True, "stop": True, "set_volume": True},
+        volume_percent=38, position_updated_at="2026-11-25T10:03:00+00:00",
+    )
+    bridge.status["now_playing"].update(position_s=120, duration_s=300)
+    await entry.runtime_data.async_refresh()
+    attrs = hass.states.get(player).attributes
+    features = MediaPlayerEntityFeature
+    assert attrs["supported_features"] & (features.SEEK | features.STOP | features.VOLUME_SET) == (
+        features.SEEK | features.STOP | features.VOLUME_SET
+    )
+    assert (attrs["media_position"], attrs["media_duration"], attrs["volume_level"]) == (120, 300, 0.38)
+    assert attrs["media_position_updated_at"].isoformat() == bridge.status["position_updated_at"]
+    for action, data, tool, args in [
+        ("media_seek", {"seek_position": 12.6}, "tv_seek", {"position_s": 13}),
+        ("media_stop", {}, "tv_remote", {"keys": ["stop"]}),
+        ("volume_set", {"volume_level": 0.25}, "tv_volume", {"percent": 25}),
+    ]:
+        await hass.services.async_call("media_player", action, {"entity_id": player, **data}, blocking=True)
+        assert (f"/api/tool/{tool}", args) in bridge.calls

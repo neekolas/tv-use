@@ -1,5 +1,6 @@
 """Apple TV playback and app selection."""
 
+from datetime import datetime
 from urllib.parse import urlsplit
 
 from homeassistant.components.media_player import (
@@ -10,6 +11,7 @@ from homeassistant.components.media_player import (
 from homeassistant.components.media_player import MediaPlayerEntityFeature as Feature
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.util.dt import parse_datetime
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import DOMAIN
@@ -60,9 +62,17 @@ async def async_setup_entry(
 class BridgePlayer(PowerCommands, BridgeEntity, MediaPlayerEntity):
     @property
     def supported_features(self) -> Feature:
+        supported = BASE_FEATURES
+        controls = self.status.get("playback_controls", {})
         if self.status.get("volume_supported"):
-            return BASE_FEATURES | Feature.VOLUME_STEP
-        return BASE_FEATURES
+            supported |= Feature.VOLUME_STEP
+        if controls.get("seek_absolute"):
+            supported |= Feature.SEEK
+        if controls.get("stop"):
+            supported |= Feature.STOP
+        if controls.get("set_volume"):
+            supported |= Feature.VOLUME_SET
+        return supported
 
     @property
     def state(self) -> MediaPlayerState | None:
@@ -78,6 +88,24 @@ class BridgePlayer(PowerCommands, BridgeEntity, MediaPlayerEntity):
     @property
     def playing(self) -> dict:
         return self.status.get("now_playing") or {}
+
+    @property
+    def media_position(self) -> int | None:
+        return self.playing.get("position_s")
+
+    @property
+    def media_duration(self) -> int | None:
+        return self.playing.get("duration_s")
+
+    @property
+    def media_position_updated_at(self) -> datetime | None:
+        stamp = self.status.get("position_updated_at")
+        return parse_datetime(stamp) if stamp and self.media_position is not None else None
+
+    @property
+    def volume_level(self) -> float | None:
+        percent = self.status.get("volume_percent")
+        return None if percent is None else percent / 100
 
     @property
     def media_title(self) -> str | None:
@@ -129,6 +157,15 @@ class BridgePlayer(PowerCommands, BridgeEntity, MediaPlayerEntity):
 
     async def async_media_previous_track(self) -> None:
         await self.command("tv_remote", keys=["previous"])
+
+    async def async_media_seek(self, position: float) -> None:
+        await self.command("tv_seek", position_s=round(position))
+
+    async def async_media_stop(self) -> None:
+        await self.command("tv_remote", keys=["stop"])
+
+    async def async_set_volume_level(self, volume: float) -> None:
+        await self.command("tv_volume", percent=volume * 100)
 
     async def async_volume_up(self) -> None:
         await self.command("tv_remote", keys=["volume_up"])

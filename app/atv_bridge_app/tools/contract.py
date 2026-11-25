@@ -206,6 +206,12 @@ SCHEMAS = {
             "then": {"properties": {"keys": described({"items": {"not": {"enum": list(MEDIA_COMMANDS)}}}, KEYS_HELP)}},
         },
     ),
+    "tv_seek": schema({
+        "position_s": described({"type": "integer", "minimum": 0}, "Absolute position in whole seconds."),
+        "offset_s": described({"type": "integer", "not": {"const": 0}}, "Signed skip in whole seconds. Negative moves backward."),
+    }, oneOf=[{"required": ["position_s"]}, {"required": ["offset_s"]}]),
+    "tv_volume": schema({"percent": described({"type": "number", "minimum": 0, "maximum": 100},
+                          "Absolute volume of the current output, in percent.")}, ["percent"]),
     "tv_sequence": sequence_schema(),
     "tv_power": schema({"on": described(BOOL, "True to wake, false to sleep.")}, ["on"]),
     "tv_pair": schema({
@@ -245,6 +251,7 @@ INSTRUCTIONS = (
     "Use tv_status for health and pairing, and tv_pair to repair missing access. "
     "Read tv_look before interrupting someone. Use tv_history to learn what people watched and for how long. Use tv_open to launch or search, tv_navigate for a labeled item, "
     "tv_remote for individual keys, text or a swipe, and tv_sequence for repeated work with explicit screen checkpoints. "
+    "Use tv_seek for absolute or relative seeking and tv_volume to set the current output level. "
     "Use tv_power for wake or sleep, tv_play for media and deep links, and tv_show for web pages. "
     "Use tv_page_run to call app functions or read and operate the mirrored document with DOM APIs. "
     "TV actions can wake the receiver and dismiss a screen saver or profile prompt. Inspect verified, evidence and screen. "
@@ -309,6 +316,7 @@ STABLE = RETRYABLE | {
     "app_not_installed",
     "not_found",
     "no_text_field",
+    "unsupported_action",
     "uncertain",
     "invalid_arguments",
 }

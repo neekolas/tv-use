@@ -13,7 +13,6 @@ from jsonschema import Draft202012Validator
 
 from ..live import TAILNET_DNS_FIX
 from ..present.interaction import PageInteraction
-from ..present.media import MediaPlayback
 from ..present.remote_input import EXIT_WINDOW_S, EXITS, RemoteInput
 from ..state import Fault, classify, now, reworded
 from . import link_info, playback_identity
@@ -47,7 +46,7 @@ class PublicTools:
         self.profile_name = None
         self.action_evidence = []
         self.prompt_view = None
-        self.media = MediaPlayback(self.engine)
+        self.media = ops.media
         self.page_interaction = PageInteraction(ops)
         self.remote_input = RemoteInput(ops, self.page_interaction)
         # Until this monotonic time, an end of the page follows a Menu or Home that a tool sent.
@@ -225,7 +224,8 @@ class PublicTools:
                 ):
                     await self.admit(replace)
                 already_off = name == "tv_power" and not args["on"] and (await self.engine.status())["power"] == "off"
-                if name not in ("tv_look", "tv_status", "tv_pair", "tv_sequence", "tv_page_run") and not already_off:
+                stop_only = name == "tv_remote" and args.get("keys") == ["stop"]
+                if name not in ("tv_look", "tv_status", "tv_pair", "tv_sequence", "tv_page_run", "tv_seek", "tv_volume") and not already_off and not stop_only:
                     await self.prepare_action(force=name == "tv_power" and args["on"])
                 result = await getattr(self, name)(**args)
                 if self.action_evidence:
@@ -437,6 +437,7 @@ class PublicTools:
                     "screen": "invalid" if screen_invalid else "ok" if screen_ready else "missing",
                 },
                 "capabilities": {
+                    **self.ops.playback_controls(s),
                     "show": bool(can and p["airplay"]),
                     "look_image": s["connected"] and screen_ready,
                     "look_text": s["connected"] and screen_ready,
@@ -546,6 +547,13 @@ class PublicTools:
         )
 
     async def settled(self, before, key):
+        if key == "stop" and (before["playing"] or {}).get("state") in ("playing", "paused"):
+            deadline = time.monotonic() + self.ops.verify_timeout
+            while True:
+                status = await self.engine.status()
+                if (status.get("now_playing") or {}).get("state") in ("idle", "stopped") or time.monotonic() >= deadline:
+                    return await self.snapshot(status=status)
+                await asyncio.sleep(0.2)
         after = await self.snapshot()
         if key in ("home", "menu", "select") and (not after["focus"] or not self.changed(before, after)):
             await asyncio.sleep(0.3)
@@ -610,6 +618,8 @@ class PublicTools:
                 )
         if keys and not check_each:
             verified &= self.changed(start, screen)
+        if keys == ["stop"]:
+            verified = (screen["playing"] or {}).get("state") in ("idle", "stopped")
         evidence.append(
             "Screen change observed" if verified else "Delivery acknowledged; screen change unconfirmed"
         )
@@ -620,6 +630,70 @@ class PublicTools:
             verified,
         )
         return result | ({"screen": screen} if screen else {})
+
+    async def tv_seek(self, position_s=None, offset_s=None):
+        """Seek within the current item. Supply position_s or a signed offset_s in whole seconds.
+        The result includes observed position and whether the player confirmed the target. For example, tv_seek {"offset_s":-30}."""
+        baseline = await self.engine.status()
+        before = baseline.get("now_playing") or {}
+        start = before.get("position_s")
+        target = position_s
+        if target is None and start is not None:
+            target = max(0, start + offset_s)
+        if target is not None and before.get("duration_s"):
+            target = min(target, before["duration_s"])
+        began = time.monotonic()
+        async with self.engine.session() as client:
+            try:
+                # tvOS can apply native skips to an old playhead after a scrub, even
+                # after playback resumes. Send one absolute seek when the timeline is known.
+                if offset_s is not None and target is not None and baseline.get("playback_controls", {}).get("seek_absolute"):
+                    await client.seek(target, None)
+                else:
+                    await client.seek(position_s, offset_s)
+            except Fault:
+                raise
+            except Exception as exc:
+                raise Fault("uncertain", "Seek delivery is uncertain.", "Check playback before seeking again.") from exc
+
+        deadline = time.monotonic() + self.ops.verify_timeout
+        while True:
+            status = await self.engine.status()
+            media = status.get("now_playing") or {}
+            position = media.get("position_s")
+            elapsed = time.monotonic() - began if media.get("state") == "playing" else 0
+            same_item = all(before.get(k) == media.get(k) for k in ("content_identifier", "title", "artist"))
+            verified = False
+            if same_item and target is not None and position is not None:
+                drift = position - elapsed
+                closer_to_target = start is None or abs(drift - target) < abs(drift - start)
+                verified = target - 1 <= position <= target + elapsed + 1 and (
+                    closer_to_target or (position_s is not None and position == target)
+                )
+            if verified or target is None or not same_item or time.monotonic() >= deadline:
+                break
+            await asyncio.sleep(0.2)
+        return outcome("Seek sent.", ["Player reported the target position." if verified else "Target position unconfirmed."],
+                       {"position_s": position, "target_s": target}, verified) | {
+            "screen": await self.snapshot(read_focus=False, status=status)
+        }
+
+    async def tv_volume(self, percent):
+        """Set the current audio output to an absolute volume between 0 and 100 percent. For example, tv_volume {"percent":25}."""
+        async with self.engine.session() as client:
+            try:
+                observed = await client.set_volume(percent)
+            except Fault:
+                raise
+            except Exception as exc:
+                _LOG.warning("Absolute volume request failed: %s", type(exc).__name__)
+                raise Fault("uncertain", "Volume delivery is uncertain.", "Check the current level before retrying.") from exc
+        status = await self.engine.status()
+        if observed is None:
+            observed = status.get("volume_percent")
+        verified = observed is not None and abs(observed - percent) <= 0.5
+        return outcome("Volume sent.", ["Output level confirmed." if verified else "Output level unconfirmed."],
+                       {"percent": observed}, verified) | {"screen": await self.snapshot(read_focus=False, status=status)}
 
     async def tv_sequence(self, steps, for_each=None):
         """Run repeated remote work in one call on one TV. Can wake the receiver. Holds its tool lock across up to 50 expanded steps and a 90-second execution deadline.

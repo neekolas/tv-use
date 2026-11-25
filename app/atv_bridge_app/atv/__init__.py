@@ -365,9 +365,19 @@ class Adapter:
             conn.close()
 
 
+PLAYBACK_FEATURES = {
+    "seek_absolute": FeatureName.SetPosition,
+    "skip_forward": FeatureName.SkipForward,
+    "skip_backward": FeatureName.SkipBackward,
+    "stop": FeatureName.Stop,
+    "set_volume": FeatureName.SetVolume,
+}
+
+
 class Session:
     def __init__(self, facade, on_power):
         self.stream_protocol = None
+        self.volume_sample = (0.0, None)
         self.facade = facade
         self.api = facade.apps.get(Protocol.Companion).api
         self.on_power = on_power
@@ -470,7 +480,62 @@ class Session:
     async def open(self, target):
         await self.api.launch_app(target)
 
+    def control_protocol(self, feature):
+        # pyatv's facade prefers MRP even when only Companion advertises this action.
+        protocols = (Protocol.Companion, Protocol.MRP) if feature == FeatureName.SetVolume else (Protocol.MRP, Protocol.Companion)
+        for protocol in protocols:
+            features = self.facade.features.get(protocol)
+            if features and features.in_state(FeatureState.Available, feature):
+                return protocol
+        return None
+
+    def control_interface(self, name, interface):
+        protocol = self.control_protocol(PLAYBACK_FEATURES[name])
+        if protocol is None:
+            raise Fault("unsupported_action", f"The current player or output does not support {name}.",
+                        "Check tv_status for available controls.")
+        return interface.get(protocol)
+
+    async def seek(self, position_s, offset_s):
+        remote = self.facade.remote_control
+        if position_s is not None:
+            await self.control_interface("seek_absolute", remote).set_position(position_s)
+        elif offset_s > 0:
+            await self.control_interface("skip_forward", remote).skip_forward(offset_s)
+        else:
+            await self.control_interface("skip_backward", remote).skip_backward(-offset_s)
+
+    async def read_companion_volume(self, *, fresh=False):
+        clock = asyncio.get_running_loop().time
+        sampled, level = self.volume_sample
+        if fresh or clock() - sampled >= 2:
+            async with asyncio.timeout(2):
+                reply = await self.api.mediacontrol_command(MediaControlCommand.GetVolume)
+            fraction = reply.get("_c", {}).get("_vol")
+            level = round(fraction * 100, 2) if isinstance(fraction, (int, float)) and 0 <= fraction <= 1 else None
+            self.volume_sample = (clock(), level)
+        return level
+
+    async def set_volume(self, percent):
+        audio = self.control_interface("set_volume", self.facade.audio)
+        if audio is self.facade.audio.get(Protocol.Companion):
+            # A receiver may acknowledge SetVolume without pushing a new volume event.
+            # GetVolume supplies direct readback even when the output quantizes the level.
+            await self.api.mediacontrol_command(MediaControlCommand.SetVolume, {"_vol": percent / 100})
+            for attempt in range(6):
+                if attempt:
+                    await asyncio.sleep(0.2)
+                observed = await self.read_companion_volume(fresh=True)
+                if observed is not None and abs(observed - percent) <= 0.5:
+                    break
+            return observed
+        await audio.set_volume(percent)
+        return audio.volume
+
     async def hid(self, key, hold_ms):
+        if key == "stop":
+            await self.control_interface("stop", self.facade.remote_control).stop()
+            return
         media = {
             "play": MediaControlCommand.Play,
             "pause": MediaControlCommand.Pause,
@@ -551,11 +616,27 @@ class Session:
         airplay_state = getattr(self.stream_protocol, "playback_state", None)
         if airplay_state:
             playing = (playing or {}) | {"state": airplay_state}
+        controls = {name: self.control_protocol(feature) for name, feature in PLAYBACK_FEATURES.items()}
+        volume = None
+        power = await self.power()
+        if controls["set_volume"] == Protocol.Companion and power in ("on", "screensaver"):
+            # Some receivers do not push volume changes, even after confirming a write.
+            with suppress(exceptions.ProtocolError, TimeoutError):
+                volume = await self.read_companion_volume()
+        elif controls["set_volume"] == Protocol.MRP:
+            level = self.facade.audio.get(Protocol.MRP).volume
+            if level is not None and 0 <= level <= 100:
+                volume = level
+        available = {name: protocol is not None for name, protocol in controls.items()}
+        if available["seek_absolute"] and playing and playing.get("position_s") is not None:
+            available["skip_forward"] = available["skip_backward"] = True
         return {
+            "playback_controls": available,
+            "volume_percent": volume,
             "airplay_playing": airplay_state == "playing",
             "name": self.facade._config.name,
             "model": self.facade.device_info.model_str,
-            "power": await self.power(),
+            "power": power,
             "app": app,
             "now_playing": playing,
             "volume_supported": self.facade.features.in_state(

@@ -10,6 +10,10 @@ class MediaPlayback:
         self.task = None
         self.problem = None
 
+    @property
+    def active(self):
+        return self.task is not None and not self.task.done()
+
     async def stop(self):
         if self.task:
             self.task.cancel()
@@ -46,7 +50,7 @@ class MediaPlayback:
                         if snapshot.get("airplay_playing"):
                             reported = media.get("position_s")
                             elapsed = (
-                                max(elapsed, reported)
+                                max(0, reported)
                                 if reported is not None
                                 else elapsed + current - stamp
                             )
@@ -66,7 +70,7 @@ class MediaPlayback:
                 finally:
                     play.cancel()
                     await asyncio.gather(play, return_exceptions=True)
-                position = max(position, elapsed)
+                position = elapsed
                 await asyncio.sleep(1 + attempt)
             raise Fault(
                 "uncertain", "AirPlay repeatedly closed early.", "Check playback before retrying."

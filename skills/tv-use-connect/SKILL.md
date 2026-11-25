@@ -31,6 +31,9 @@ Same token for both HA paths. The port is 8123 by default, 80 on some installs. 
 | A known route with checks | `tv_sequence` |
 | Open an app, search, follow a menu path | `tv_open` |
 | YouTube, media URL, deep link | `tv_play`; the TV fetches media URLs itself |
+| Seek within playback | `tv_seek` with `position_s` or a signed `offset_s` in whole seconds |
+| Stop playback | `tv_remote {"keys":["stop"]}` |
+| Set volume | `tv_volume {"percent":25}` on an output that supports absolute volume |
 | Wake or sleep | `tv_power` |
 | What the household watched, or what's playing now without a screen read | `tv_history {"since":"30d","limit":0}` for a summary, then narrow with `app`, `search` or `tv`. `watched_s` is seconds actually played; Netflix gives no titles; `data.now` is what's playing. |
 | Show and change a web page | `tv_show`, `tv_page_run`; see **tv-use-web-apps** |

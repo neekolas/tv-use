@@ -774,3 +774,87 @@ async def test_hung_tool_returns_uncertain_and_frees_the_lock(ui, caplog):
     assert "Tool tv_navigate finished: uncertain" in caplog.text
     service.tools.tool_timeout = 150
     assert (await service.tools.call("tv_remote", {"keys": ["right"]}))["ok"]
+
+
+@pytest.mark.parametrize("args", [{}, {"position_s": -1}, {"offset_s": 0}, {"offset_s": 1.5},
+                                  {"position_s": 0, "offset_s": 5}])
+async def test_seek_rejects_invalid_input(service, args):
+    assert (await service.tools.call("tv_seek", args))["error"]["code"] == "invalid_arguments"
+
+
+async def test_seek_readback(ui):
+    service, _, tv = ui
+    tv.media = {"title": "Clip", "state": "paused", "position_s": 60, "duration_s": 150}
+    service.operations.verify_timeout = 0
+
+    async def seek(position_s, offset_s):
+        tv.media["position_s"] = position_s if position_s is not None else tv.media["position_s"] + offset_s
+
+    tv.seek = AsyncMock(side_effect=seek)
+    result = await service.tools.call("tv_seek", {"offset_s": -30})
+    assert result["verified"] and result["data"] == {"position_s": 30, "target_s": 30}
+    result = await service.tools.call("tv_seek", {"position_s": 0})
+    assert result["verified"] and result["screen"]["playing"]["position_s"] == 0
+    tv.seek = AsyncMock()
+    assert not (await service.tools.call("tv_seek", {"position_s": 19}))["verified"]
+    tv.seek = AsyncMock(side_effect=ConnectionResetError())
+    assert (await service.tools.call("tv_seek", {"offset_s": -5}))["error"]["code"] == "uncertain"
+    tv.seek.assert_awaited_once_with(None, -5)
+
+
+async def test_volume_confirms_observed_output(ui):
+    service, _, tv = ui
+    tv.set_volume = AsyncMock(return_value=None)
+    status = await tv.status()
+    tv.status = AsyncMock(return_value=status | {"volume_percent": 24.9})
+    result = await service.tools.call("tv_volume", {"percent": 25})
+    assert result["verified"] and result["data"]["percent"] == 24.9
+    tv.set_volume.assert_awaited_once_with(25)
+    tv.status.return_value["volume_percent"] = 50
+    assert not (await service.tools.call("tv_volume", {"percent": 25}))["verified"]
+
+
+async def test_stop_cancels_owned_airplay_or_reports_unsupported(ui):
+    service, _, tv = ui
+    service.engine.adapter.supports_play_url = True
+    started = asyncio.Event()
+    async def play(*args):
+        started.set()
+        await asyncio.Event().wait()
+    tv.play_url = play
+    await service.tools.media.start("https://example.invalid/clip")
+    await started.wait()
+    assert (await service.operations.status())["playback_controls"]["stop"]
+    assert (await service.tools.call("tv_remote", {"keys": ["stop"]}))["ok"]
+    assert not service.tools.media.active
+    tv.hid = AsyncMock(side_effect=Fault("unsupported_action", "Stop unavailable.", "Check tv_status."))
+    result = await service.tools.call("tv_remote", {"keys": ["stop"]})
+    assert result["error"]["code"] == "unsupported_action"
+    assert result["data"]["confirmed_keys"] == 0
+
+
+@pytest.mark.parametrize("state", ["playing", "paused"])
+async def test_skip_after_seek_uses_current_position(ui, state):
+    service, _, tv = ui
+    tv.media = {"state": state, "position_s": 120, "duration_s": 240}
+    status = await tv.status()
+    tv.status = AsyncMock(return_value=status | {"playback_controls": {"seek_absolute": True}})
+    async def seek(position_s, offset_s):
+        tv.media["position_s"] = position_s
+    tv.seek = AsyncMock(side_effect=seek)
+    result = await service.tools.call("tv_seek", {"offset_s": 30})
+    tv.seek.assert_awaited_once_with(150, None)
+    assert result["verified"] and result["data"]["position_s"] == 150
+
+
+async def test_stop_waits_for_player_state(ui):
+    service, _, tv = ui
+    service.operations.verify_timeout = 1
+    tv.media = {"state": "playing"}
+
+    async def stop(key, hold):
+        assert key == "stop"
+        asyncio.get_running_loop().call_later(0.25, tv.media.update, {"state": "idle"})
+    tv.hid = stop
+    result = await service.tools.call("tv_remote", {"keys": ["stop"]})
+    assert result["verified"] and result["screen"]["playing"]["state"] == "idle"

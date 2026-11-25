@@ -10,6 +10,7 @@ import yaml
 
 from ..live import TAILNET_DNS_FIX, probe, resolve_tailnet, tailnet_dns
 from ..present.browsers import browser_status
+from ..present.media import MediaPlayback
 from ..state import Fault, classify, now, reworded, success
 
 LINKS = yaml.safe_load((Path(__file__).parents[1] / "data/deeplinks.yaml").read_text())
@@ -20,7 +21,7 @@ SYSTEM_APP_NAMES = {
     "com.apple.TVSystemUIService": "System UI",
     "com.apple.IdleScreen": "Screen Saver",
 }
-MEDIA_COMMANDS = ("play", "pause", "next", "previous")
+MEDIA_COMMANDS = ("play", "pause", "next", "previous", "stop")
 KEYS = (
     "up",
     "down",
@@ -39,10 +40,7 @@ KEYS = (
     "guide",
     "page_up",
     "page_down",
-    "play",
-    "pause",
-    "next",
-    "previous",
+    *MEDIA_COMMANDS,
 )
 TEXT = {"type": "string", "minLength": 1}
 BOOL = {"type": "boolean"}
@@ -106,6 +104,7 @@ class Tools:
         self.observer = observer
         self.state = state
         self.verify_timeout = verify_timeout
+        self.media = MediaPlayback(engine)
         # Why the TV ended the last page, reported as screen.last_presentation_end. It changes only under the
         # stage lock: a dismissal sets it, and a new page or any other hide takes over and clears it.
         self.presentation_end = None
@@ -220,9 +219,17 @@ class Tools:
             "source": "accessibility",
         }
 
+    def playback_controls(self, status):
+        controls = status.get("playback_controls", {})
+        if self.media.active:
+            return controls | {"stop": True}
+        return controls
+
     async def status(self):
         status = await self.engine.status()
-        return status | {"app": await self.foreground_app(status, lookup_focus=True)}
+        status["playback_controls"] = self.playback_controls(status)
+        sampled_at = now()
+        return status | {"position_updated_at": sampled_at, "app": await self.foreground_app(status, lookup_focus=True)}
 
     async def tv_sleep(self):
         """Send the Sleep key to the Apple TV."""
@@ -363,7 +370,7 @@ class Tools:
         """Press an ordered key sequence once. An uncertain delivery must never be replayed automatically."""
         if hold_ms and any(key in MEDIA_COMMANDS for key in keys):
             raise invalid(
-                "hold_ms requires HID keys. Play, pause, next and previous are media commands."
+                "hold_ms requires HID keys. Media commands cannot be held."
             )
         count = 0
         attempted = False
@@ -372,7 +379,10 @@ class Tools:
                 for index, key in enumerate(keys):
                     if index and gap_ms:
                         await asyncio.sleep(gap_ms / 1000)
-                    if key == "home" or switching_app:
+                    if key == "stop" and self.media.active:
+                        attempted = True
+                        await self.media.stop()
+                    elif key == "home" or switching_app:
                         async with self.changing_app():
                             attempted = True
                             await client.hid(key, hold_ms)
@@ -393,7 +403,9 @@ class Tools:
                         result["focused"] = (await self.observer.call("ax_focused"))["focused"]
                     except Exception as exc:  # noqa: BLE001 - Observation cannot invalidate acknowledged delivery.
                         result.update(focused=None, focus_error=classify(exc).result()["error"])
-        except Exception:
+        except Exception as exc:
+            if isinstance(exc, Fault) and exc.code == "unsupported_action":
+                return exc.result() | {"confirmed_keys": count}
             if not attempted:
                 raise
             return Fault(

@@ -118,6 +118,8 @@ Every tool accepts an optional `tv`. Use the name or stable bridge ID from `tv:/
 | Navigate by label | `tv_navigate {"tv":"<TV name>","to":"General","select":true}` | Targets a visible label. Requires screen pairing. |
 | Use the remote | `tv_remote {"tv":"<TV name>","keys":["down"]}` | Sends keys, a swipe or text. Text entry requires a focused keyboard field. |
 | Batch remote work | `tv_sequence {"tv":"<TV name>","steps":[{"to":"General"},{"expect":{"focus":"General"}}]}` | Runs on one receiver and stops at the first failed step. |
+| Seek within playback | `tv_seek {"tv":"<TV name>","offset_s":-30}` | Skip by a signed number of seconds or use `position_s` to jump to a timestamp. |
+| Set volume | `tv_volume {"tv":"<TV name>","percent":25}` | Set the active output to an absolute level when supported. |
 | Set power | `tv_power {"tv":"<TV name>","on":false}` | Checks the resulting Apple TV power state. |
 | Repair pairing | `tv_pair {"tv":"<TV name>","kind":"screen"}` | Starts a PIN exchange for a registered TV. Follow `data.ask_user` and use the returned pairing ID. Use `kind:"control"` for AirPlay. |
 | Check health | `tv_status {"tv":"<TV name>"}` | Reports reachability, pairing state, capabilities and problems with suggested fixes. |

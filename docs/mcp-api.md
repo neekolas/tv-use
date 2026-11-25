@@ -59,7 +59,7 @@ Arguments below are JSON objects. Add `"tv":"<room>"` to any example. Strings mu
 
 ### tv_status
 
-`{}` checks bridge health. For a single receiver, inspect `data.tv` (including `id`, `name`, `model`, `tvos`, `address`, `address_source`, `reachable`), `data.pairings.control` and `data.pairings.screen` (`ok`, `missing`, `invalid`). `data.capabilities` reports `show`, `look_text`, `look_image` and `play_media`. Health also includes `browser`, `tailnet_dns` and `problems`. A successful check can report problems. An `address_changed` entry is informational and has no `fix`.
+`{}` checks bridge health. For a single receiver, inspect `data.tv` (including `id`, `name`, `model`, `tvos`, `address`, `address_source`, `reachable`), `data.pairings.control` and `data.pairings.screen` (`ok`, `missing`, `invalid`). `data.capabilities` reports `show`, `look_text`, `look_image` and `play_media`. On a connected receiver it also reports `seek_absolute`, `skip_forward`, `skip_backward`, `stop` and `set_volume` for the active player and output. Health also includes `browser`, `tailnet_dns` and `problems`. A successful check can report problems. An `address_changed` entry is informational and has no `fix`.
 
 ### tv_history
 
@@ -258,6 +258,16 @@ Success returns `data.app`. Search adds `data.path` with the search method. Menu
 
 `{"to":"Remotes and Devices","select":true}` moves focus to an accessible label, then selects it. Omit `select` or set it false to focus only. Optional `within` is a container hint. Matching ignores case and allows prefixes. Prefer the full label from a recent look. Navigation stops at 40 presses including Select, or after three direction presses leave focus unchanged. Inspect `data.path`, `screen.focus` and `verified`. A changed setting value on the same row can verify a selection.
 
+### tv_seek
+
+Supply exactly one of `{"position_s":750}` to jump to 12:30 or `{"offset_s":-30}` to skip back 30 seconds. A positive offset skips forward. Both take whole seconds. Position zero goes to the start. An offset of zero is invalid. With a current position and absolute seek support, the bridge sends a relative skip as one absolute seek. Otherwise it uses the player’s advertised skip command. The bridge reports each available operation in `tv_status.data.capabilities` as `seek_absolute`, `skip_forward` and `skip_backward`.
+
+The result reports the observed `data.position_s`, the expected `data.target_s`, and `verified`. Players may omit their position. Check the observed playback state before retrying an uncertain skip.
+
+### tv_volume
+
+`{"percent":25}` requests 25% on the active audio output. Availability depends on its absolute volume capability, reported as `set_volume`. The result reports the observed level in `data.percent`. Relative-only outputs can still use remote volume keys when supported.
+
 ### tv_remote
 
 Choose one form:
@@ -268,7 +278,7 @@ Choose one form:
 
 Optional `check_each` (keys only, default false) switches to the slower per-key mode described below.
 
-HID keys are `up`, `down`, `left`, `right`, `menu`, `select`, `home`, `volume_up`, `volume_down`, `siri`, `screensaver`, `play_pause`, `channel_increment`, `channel_decrement`, `guide`, `page_up` and `page_down`. Media commands are `play`, `pause`, `next` and `previous`.
+HID keys are `up`, `down`, `left`, `right`, `menu`, `select`, `home`, `volume_up`, `volume_down`, `siri`, `screensaver`, `play_pause`, `channel_increment`, `channel_decrement`, `guide`, `page_up` and `page_down`. Media commands are `play`, `pause`, `next`, `previous` and `stop`. Stop ends a media URL playing through the bridge. For other playback it requires the active player to advertise Stop.
 
 By default the bridge sends the keys in one burst, 100 ms apart, waits 300 ms and reads the screen once. `verified` is true when power, focus, keyboard, app or playback differs from the start. After `home`, it reads the screen before sending the remaining keys and stops if focus is unreadable. With `check_each: true` it reads the screen after every key, so `verified` is false if any key showed no change, and missing focus between keys stops the run. Lost acknowledgment always stops the keys. `data.confirmed_keys` counts acknowledged keys. The next attempted key may also have arrived. Look before sending more. The bridge has no purchase guard. Get the user's approval before selecting a paid action.
 
@@ -330,6 +340,7 @@ A tool failure includes `error.code`, `error.message`, `error.retryable` and `er
 | `invalid_arguments` | Invalid arguments, content or pairing exchange | no |
 | `tv_required` / `tv_not_found` | Ambiguous selection or unknown receiver. Read `data.tvs`. | no |
 | `mirror_busy` | All mirror slots are held. Read `data.holders`. | no |
+| `unsupported_action` | Current player or output lacks the requested control | no |
 | `uncertain` | Delivery, effect or destination lacks confirmation | no |
 | `stale_view` / `target_missing` | The document changed during execution or the browser is on a protected page | no |
 | `scripts_disabled` / `script_error` | Caller scripts are disabled, or JavaScript failed or exceeded its deadline | no |
@@ -342,6 +353,8 @@ A tool failure includes `error.code`, `error.message`, `error.retryable` and `er
 - `tv://page-guide` describes page design and updates. The `present` prompt takes a required `topic` and returns an HTML starting point.
 
 ## HTTP and Home Assistant
+
+The bridge media-player entity exposes `media_player.media_seek`, `media_player.media_stop` and `media_player.volume_set` when supported. Its timeline uses the observed playback position, duration and observation time. Home Assistant takes seek positions in seconds and volume levels from 0 to 1.
 
 Scripts can POST JSON arguments to `/api/atv_bridge/tool/<name>` with the same HA admin header. The HTTP result places a requested image in `data.image`. For bundled pages, POST a raw ZIP to `/api/atv_bridge/bundle`. Success returns `{"bundle":"<32 lowercase hex characters>"}`. See [upload limits and commands](../skills/tv-use-web-apps/references/delivery.md).
 
