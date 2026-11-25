@@ -69,6 +69,14 @@ async with extras.subscribe("TVSystemStatus", on_status):
     reply = await extras.fetch_current_now_playing_info()
 ```
 
+#### Captions on a live player
+
+On 2026-11-25, the living room Apple TV 4K (2nd generation, tvOS 27.2) played an AirPlay MP4 with a selectable English subtitle track. The player showed **On (Mute)**. It acknowledged `ToggleCaptions` twice. The selected track, the caption setting and the visible subtitle stayed the same.
+
+Companion `GetCaptionSettings` (12) returned `{"_mcs": 3}`. With `SetCaptionSettings` (13), the TV accepted integer `_mcs` values 1, 2 and 3 and returned each value on the next read. It rejected 0 and rejected the Boolean `_cse` form. MediaRemote reported an automatic subtitle selection after the numeric writes. The subtitle remained visible with both English and unspecified audio language tags. Mode readback alone cannot verify subtitle visibility in this player.
+
+The SDK's `tv_remote` could open the AirPlay player's **Subtitles** menu and select **Off** or **On**. Screenshots during playback confirmed that the English cue disappeared and reappeared. This experiment covered the AirPlay player only.
+
 ### Credential interchange
 
 `pyatv.auth.convert` operates on credential strings in memory. In the example, `airplay` is the saved pyatv credential string, `tv_mac` is the receiver's advertised device ID, and `address` is its AirPlay `host:port`. All four HAP fields survive conversion, including the original case of the UTF-8 pairing identifiers. AirPlay and Companion use the same pyatv ordering of receiver public key, controller private seed, receiver ID and controller ID. The receiver must accept this controller identity during Companion pair-verify. Hardware may require a separate Companion PIN pairing.
