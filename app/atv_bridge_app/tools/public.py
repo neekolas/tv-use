@@ -22,7 +22,7 @@ from .sequence import run_sequence
 from .deep_link import confirm_custom_link, link_targets, observed, title_action
 from .pair import exchange
 from .prompts import prompt_choice
-from .navigation import label, match_app, matches_label, navigate, normal
+from .navigation import label, match_app, matches_label, navigate, normal, select_option
 
 KEY_GAP_MS = 100
 # Longer than any single tool's own deadline (tv_sequence allows 90 s), so it only catches real hangs.
@@ -211,6 +211,8 @@ class PublicTools:
             )
         if (waited := time.monotonic() - waiting) > 1:
             _LOG.info("Tool %s waited %d ms for the TV lock", name, waited * 1000)
+        guarded_navigation = name == "tv_navigate" and args.get("ensure_selected")
+        navigation_path = []
         deadline = asyncio.timeout(self.tool_timeout)
         try:
             async with deadline:
@@ -225,9 +227,10 @@ class PublicTools:
                     await self.admit(replace)
                 already_off = name == "tv_power" and not args["on"] and (await self.engine.status())["power"] == "off"
                 stop_only = name == "tv_remote" and args.get("keys") == ["stop"]
-                if name not in ("tv_look", "tv_status", "tv_pair", "tv_sequence", "tv_page_run", "tv_seek", "tv_volume") and not already_off and not stop_only:
+                if name not in ("tv_look", "tv_status", "tv_pair", "tv_sequence", "tv_page_run", "tv_seek", "tv_volume") and not already_off and not stop_only and not guarded_navigation:
                     await self.prepare_action(force=name == "tv_power" and args["on"])
-                result = await getattr(self, name)(**args)
+                kwargs = args | {"_path": navigation_path} if guarded_navigation else args
+                result = await getattr(self, name)(**kwargs)
                 if self.action_evidence:
                     result["evidence"][:0] = self.action_evidence
                 if name != "tv_status" and "screen" not in result:
@@ -244,6 +247,8 @@ class PublicTools:
                 )
             else:
                 fault = classify(exc)
+            if guarded_navigation:
+                fault.fields["path"] = navigation_path
             if name not in ("tv_status", "tv_pair", "tv_page_run"):
                 try:
                     async with asyncio.timeout(10):
@@ -458,9 +463,10 @@ class PublicTools:
         The history is private. It is stored only on the Home Assistant host and served only to HA administrators. For example, tv_history {"since":"7d","app":"YouTube"}."""
         return await report([({}, self.history)], **filters)
 
-    async def read_observation(self, *, single_read=False):
+    async def read_observation(self, *, single_read=False, menu_label=None):
         try:
-            observation = await self.ops.observer.call("ax_items", max_items=100)
+            query = {"menu_label": menu_label} if menu_label is not None else {}
+            observation = await self.ops.observer.call("ax_items", max_items=100, **query)
             if single_read:
                 return {"focused": None, "app": None} | observation
             focus = (
@@ -509,6 +515,7 @@ class PublicTools:
                     "label": label(i),
                     "role": i.get("role"),
                     "value": i.get("value"),
+                    "selected": i.get("selected"),
                     "focused": bool(focus)
                     and (
                         (i["uid"] == focus["uid"])
@@ -701,10 +708,21 @@ class PublicTools:
         An acknowledged raw key leaves verified=false even when a later checkpoint passes. For example, tv_sequence {"steps":[{"key":"menu"},{"expect":{"app":"Settings"}}]}."""
         return await run_sequence(self, steps, for_each)
 
-    async def tv_navigate(self, to, select=False, within=None, *, exact=False):
+    async def ensure_menu_option(self, to, within, path):
+        verified, view = await select_option(self.read_observation, self.press, to, within, path)
+        screen = await self.snapshot(view["focused"], False, view)
+        if verified:
+            summary, evidence = f"{to} is selected.", "Observed the selected accessibility trait"
+        else:
+            summary, evidence = f"Sent Select for {to}. Selection is unconfirmed.", "Select acknowledged"
+        return outcome(summary, [evidence], {"path": path}, verified) | {"screen": screen}
+
+    async def tv_navigate(self, to, select=False, within=None, ensure_selected=False, *, exact=False, _path=None):
         """Focus one accessible label, optionally selecting it. Can wake the TV. Reads focus between direction keys, with a 40-press limit.
-        Inspect data.path and screen.focus. Selection is verified when focus moves or the row value changes. Use tv_sequence for several guarded actions.
+        Use ensure_selected for a unique exact picker option. It verifies the checkmark and skips an already selected option. Ordinary select verifies focus or value changes.
         For example, tv_navigate {"to":"General"}."""
+        if ensure_selected:
+            return await self.ensure_menu_option(to, within, [] if _path is None else _path)
         previous_value = None
         async def observe_target():
             nonlocal previous_value

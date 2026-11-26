@@ -1,3 +1,4 @@
+import asyncio
 from difflib import SequenceMatcher
 from ..state import Fault
 
@@ -51,6 +52,28 @@ def center(item):
 def matches_label(item, target, exact):
     current, wanted = normal(label(item)), normal(target)
     return current == wanted if exact else current.startswith(wanted)
+
+
+def direction_to(focus, items, destination, alternate):
+    here = next(
+        (i for i in items if (focus or {}).get("uid") and i.get("uid") == focus["uid"]), None
+    ) or next((i for i in items if normal(label(i)) == normal(label(focus))), focus)
+    a, b = center(here), center(destination)
+    if a and b and a != b:
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        direction = (
+            ("right" if dx > 0 else "left")
+            if dx and (not dy or (abs(dx) > abs(dy)) != alternate)
+            else ("down" if dy > 0 else "up")
+        )
+    else:
+        backward = (
+            here in items and destination in items and items.index(destination) < items.index(here)
+        )
+        direction = (
+            ("left" if alternate else "up") if backward else ("right" if alternate else "down")
+        )
+    return direction
 
 
 async def navigate(observe, press, to, select=False, within=None, *, exact=False):
@@ -110,24 +133,7 @@ async def navigate(observe, press, to, select=False, within=None, *, exact=False
                 "Inspect tv_look and choose another label.",
                 path=path,
             )
-        here = next(
-            (i for i in items if (focus or {}).get("uid") and i.get("uid") == focus["uid"]), None
-        ) or next((i for i in items if normal(label(i)) == current), focus)
-        a, b = center(here), center(destination)
-        if a and b and a != b:
-            dx, dy = b[0] - a[0], b[1] - a[1]
-            direction = (
-                ("right" if dx > 0 else "left")
-                if dx and (not dy or (abs(dx) > abs(dy)) != alternate)
-                else ("down" if dy > 0 else "up")
-            )
-        else:
-            backward = (
-                here in items and destination in items and items.index(destination) < items.index(here)
-            )
-            direction = (
-                ("left" if alternate else "up") if backward else ("right" if alternate else "down")
-            )
+        direction = direction_to(focus, items, destination, alternate)
         try:
             await press(direction)
         except Fault as exc:
@@ -140,3 +146,75 @@ async def navigate(observe, press, to, select=False, within=None, *, exact=False
         stalled = stalled + 1 if unchanged else 0
         if unchanged:
             alternate = not alternate
+
+
+def row_id(row):
+    if row and row.get("pid") is not None and row.get("uid") is not None:
+        return row["pid"], row["uid"]
+    return None
+
+
+def menu_option(observation, to, within):
+    if observation.get("truncated"):
+        return None
+    matches = [
+        row for row in observation["items"]
+        if matches_label(row, to, exact=True)
+        and (not within or normal(row.get("within") or row.get("container")) == normal(within))
+    ]
+    return matches[0] if len(matches) == 1 and matches[0].get("on_screen") is True else None
+
+
+async def select_option(read, press, to, within, path):
+    """Return the checkmark and its observation. The caller retains the attempted input path."""
+    if not normal(to):
+        raise Fault("invalid_arguments", "A menu option label is required.", "Supply its full label.")
+    observation = await read(single_read=True, menu_label=to)
+    target_id = row_id(menu_option(observation, to, within))
+    previous_focus = None
+    stalled = 0
+    while True:
+        option = menu_option(observation, to, within)
+        if target_id is None or row_id(option) != target_id:
+            raise Fault("not_found", "Could not identify the same unique visible menu option.",
+                        "Read tv_look and check the exact label and container.")
+        if option.get("selected") is True:
+            return True, observation
+        if option.get("selected") is not False:
+            raise Fault("screen_unavailable", "The option's selection state is unavailable.",
+                        "Inspect the app's picker before acting.")
+        focus = observation["focused"]
+        current = row_id(focus)
+        if current is None or current[0] != target_id[0]:
+            raise Fault("screen_unavailable", "The picker has no identifiable focused row.",
+                        "Read tv_look before sending input.")
+        if current == previous_focus:
+            stalled += 1
+        else:
+            stalled = 0
+        if len(path) >= 40 or stalled >= 3:
+            raise Fault("not_found", "Focus did not reach the menu option.", "Inspect the picker.")
+        if current == target_id and matches_label(focus, to, exact=True):
+            if previous_focus == current:
+                path.append("select")
+                await press("select")
+                break
+            # A second fresh snapshot guards a focus or checkmark change just before activation.
+        else:
+            direction = direction_to(focus, observation["items"], option, stalled % 2)
+            path.append(direction)
+            await press(direction)
+        previous_focus = current
+        observation = await read(single_read=True, menu_label=to)
+
+    for attempt in range(3):
+        if attempt:
+            await asyncio.sleep(0.3)
+        try:
+            observation = await read(single_read=True, menu_label=to)
+        except Fault:
+            observation = {"app": None, "focused": None, "items": []}
+        option = menu_option(observation, to, within)
+        if row_id(option) == target_id and option.get("selected") is True:
+            return True, observation
+    return False, observation

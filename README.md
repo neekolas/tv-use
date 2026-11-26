@@ -116,6 +116,7 @@ Every tool accepts an optional `tv`. Use the name or stable bridge ID from `tv:/
 | Open an app | `tv_open {"tv":"<TV name>","app":"Settings"}` | Optionally supply a search or a menu path. Read `tv://apps/<TV ID>` for installed apps. |
 | Read the screen | `tv_look {"tv":"<TV name>"}` | Reads accessibility labels and focus. Some apps expose little text. Set `image` to `true` for a screenshot. tvOS can show a screenshot notice. |
 | Navigate by label | `tv_navigate {"tv":"<TV name>","to":"General","select":true}` | Targets a visible label. Requires screen pairing. |
+| Check a menu option | `tv_navigate {"tv":"<TV name>","to":"English (CC)","ensure_selected":true}` | Use inside an open picker. An already checked option takes zero remote presses. |
 | Use the remote | `tv_remote {"tv":"<TV name>","keys":["down"]}` | Sends keys, a swipe or text. Text entry requires a focused keyboard field. |
 | Batch remote work | `tv_sequence {"tv":"<TV name>","steps":[{"to":"General"},{"expect":{"focus":"General"}}]}` | Runs on one receiver and stops at the first failed step. |
 | Seek within playback | `tv_seek {"tv":"<TV name>","offset_s":-30}` | Skip by a signed number of seconds or use `position_s` to jump to a timestamp. |

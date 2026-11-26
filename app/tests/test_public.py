@@ -858,3 +858,96 @@ async def test_stop_waits_for_player_state(ui):
     tv.hid = stop
     result = await service.tools.call("tv_remote", {"keys": ["stop"]})
     assert result["verified"] and result["screen"]["playing"]["state"] == "idle"
+
+
+async def test_ensure_selected_checks_the_row_independently_of_focus(ui):
+    service, grid, tv = ui
+    grid.labels = ["Off", "English (CC)"]
+    selected = 0
+
+    async def observe(method, **kwargs):
+        focus, items = await grid.observe()
+        for i, row in enumerate(items):
+            row.update(pid=11, selected=i == selected, on_screen=True)
+        return {"focused": focus, "items": items}
+
+    async def press(key, hold):
+        nonlocal selected
+        await grid.press(key)
+        if key == "select":
+            selected = grid.cursor
+            grid.cursor = 0
+
+    service.observer.call = observe
+    tv.hid = press
+    service.tools.prepare_action = AsyncMock(side_effect=AssertionError("unexpected prompt handling"))
+    args = {"to": "English (CC)", "ensure_selected": True}
+    first = await service.tools.call("tv_navigate", args)
+    assert first["verified"] and first["data"]["path"] == ["right", "select"]
+    look = await service.tools.call("tv_look", {})
+    assert [(r["focused"], r["selected"]) for r in look["data"]["items"]] == [(True, False), (False, True)]
+    again = await service.tools.call("tv_navigate", args)
+    assert again["verified"] and again["data"]["path"] == []
+    assert grid.keys == ["right", "select"]
+
+
+@pytest.mark.parametrize("case", ["duplicate", "unknown", "truncated", "scope", "prefix", "replaced", "conflict", "covered"])
+async def test_ensure_selected_requires_one_observable_option(ui, case):
+    service, grid, _ = ui
+    reads = 0
+
+    async def observe(method, **kwargs):
+        nonlocal reads
+        reads += 1
+        row = {"uid": "a", "pid": 12 if case == "replaced" and reads > 1 else 11,
+               "label": "English (CC)", "on_screen": case != "covered", "selected": None if case == "unknown" else False}
+        rows = [row, dict(row, uid="b")] if case == "duplicate" else [row]
+        return {"focused": row, "items": rows, "truncated": case == "truncated"}
+
+    service.observer.call = observe
+    args = {"to": "English" if case == "prefix" else "English (CC)", "ensure_selected": True}
+    if case == "scope":
+        args["within"] = "Audio"
+    if case == "conflict":
+        args["select"] = True
+    result = await service.tools.call("tv_navigate", args)
+    assert not result["ok"] and not result["verified"] and grid.keys == []
+
+
+@pytest.mark.parametrize("after", ["picker_closed", "replacement_selected", "read_failed", "timed_out"])
+async def test_ensure_selected_preserves_unverified_press(ui, after):
+    service, grid, _ = ui
+    row = {"label": "English (CC)", "uid": "a", "pid": 11, "selected": False, "on_screen": True}
+
+    async def observe(method, **kwargs):
+        item = row
+        if grid.keys:
+            if after == "read_failed":
+                raise Fault("observer_failed", "Disconnected", "Reconnect")
+            if after == "timed_out" and method == "ax_items":
+                await asyncio.sleep(10)
+            item = dict(row, uid="b", selected=True) if after == "replacement_selected" else None
+        return {"focused": item, "items": [item] if item else []}
+
+    service.observer.call = observe
+    service.tools.settle_ms = 0
+    if after == "timed_out":
+        service.tools.tool_timeout = 0.2
+    result = await service.tools.call("tv_navigate", {"to": "English (CC)", "ensure_selected": True})
+    assert not result["verified"] and result["data"]["path"] == grid.keys == ["select"]
+
+
+async def test_ensure_selected_rechecks_before_pressing(ui):
+    service, grid, _ = ui
+    reads = 0
+
+    async def observe(method, **kwargs):
+        nonlocal reads
+        reads += 1
+        option = {"label": "English (CC)", "pid": 11, "uid": "a", "on_screen": True,
+                  "selected": reads >= 2}
+        return {"focused": option, "items": [option]}
+
+    service.observer.call = observe
+    result = await service.tools.call("tv_navigate", {"to": "English (CC)", "ensure_selected": True})
+    assert result["verified"] and result["data"]["path"] == grid.keys == []

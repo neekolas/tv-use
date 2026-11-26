@@ -33,7 +33,11 @@ Using the archived option in field 27, addressed to the active player, produced 
 
 ## Netflix through the existing MCP
 
-Press Up with `tv_remote` to reveal playback controls. Read `tv_look` for the actual title’s labels. This stream offered a pair of quick choices and an **Other subtitle and audio options** picker. Selecting **English (CC)** or **Off** in that picker avoids changing the audio language. Reopening the picker put focus on **Off** even when **English (CC)** was checked. The public MCP currently returns focus and text values. The diagnostic also read `UIAccessibilityTraitSelected` to distinguish the checked choice from keyboard focus. Netflix documents the same path into the picker. [Netflix player instructions](https://help.netflix.com/en/node/372) · [MCP remote and navigation](../mcp-api.md#tv_navigate)
+Press Up with `tv_remote` to reveal playback controls. Read `tv_look` for the actual title’s labels. This stream offered a pair of quick choices and an **Other subtitle and audio options** picker. Selecting **English (CC)** or **Off** in that picker avoids changing the audio language. Reopening the picker put focus on **Off** even when **English (CC)** was checked. The diagnostic read `UIAccessibilityTraitSelected` to distinguish the checked choice from keyboard focus. The public MCP now exposes that trait as `tv_look`’s per-item `selected` field. Netflix documents the same path into the picker. [Netflix player instructions](https://help.netflix.com/en/node/372) · [MCP remote and navigation](../mcp-api.md#tv_navigate)
+
+In the live MCP test, selecting **English (CC)** from **Off** sent Down and Select and closed the picker. Reopening it showed **English (CC)** selected with focus on **Off**. Repeating the request returned `verified: true` with an empty path. Selecting **Off** restored the original subtitle and left **English [Original]** audio selected.
+
+Netflix also retained an old subtitle table in its accessibility tree while the player controls had focus. Even a hit test at the center of a retained row could point to that row. In the open picker, the focused row and option belonged to the same `UITableView`. After dismissal, the focused button belonged to the player controls and the retained option belonged to a separate table. The bridge checks the owning container as well as the hit test for `ensure_selected`.
 
 ## Other control surfaces
 

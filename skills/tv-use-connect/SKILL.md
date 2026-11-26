@@ -26,6 +26,7 @@ Same token for both HA paths. The port is 8123 by default, 80 on some installs. 
 | Goal | Tool |
 |---|---|
 | Read app, focus, labels, playback | `tv_look`; `"image":true` adds a screenshot and a toast on the TV |
+| Ensure a visible picker option is checked | `tv_navigate {"to":"English (CC)","ensure_selected":true}` |
 | Select a visible label | `tv_navigate {"to":"General","select":true}` |
 | Keys, swipe, text | `tv_remote`; one burst, `"check_each":true` only when every press must be confirmed |
 | A known route with checks | `tv_sequence` |
@@ -53,7 +54,7 @@ Results carry `ok`, `summary`, `verified`, `evidence` and usually `screen`. `ver
 | File | Load to |
 |---|---|
 | [connect.md](references/connect.md) | Register the server, probe for a local connection, call tools over REST |
-| [native-apps.md](references/native-apps.md) | Drive native apps: sequences, profile pickers, Open prompts, power |
+| [native-apps.md](references/native-apps.md) | Verify checked options, run sequences, handle profiles and Open prompts, control power |
 | [deeplinks.md](references/deeplinks.md) | Find a deep link for a streaming service |
 | [examples.md](references/examples.md) | Play a podcast, find which app has a show, script a Settings route |
 | [troubleshooting.md](references/troubleshooting.md) | Handle an error code, status problem, HTTP error or pairing exchange |

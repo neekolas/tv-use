@@ -2,6 +2,12 @@
 
 Read `tv://apps/<id>` if the app name is ambiguous. For a YouTube video, inspect the reported title because playback metadata can omit the video ID. For a service link, use `data.landed` to decide whether to continue from a title page or browse the app. A regional Apple TV catalog link may hand off to a provider. Copy its visible action label before continuing. See [deep links](deeplinks.md).
 
+## Choose a checked menu option
+
+Open the app’s picker and use `tv_look` to read its option labels. `focused` tells you where Select will act. `selected` tells you which option the app marks as checked. A null selection means the app’s accessibility traits were unavailable.
+
+For example, with the Netflix subtitle picker open, call `tv_navigate {"tv":"<room>","to":"English (CC)","ensure_selected":true}`. Use the full label as shown on that title. If the option is already checked, the call returns `verified: true` and an empty `data.path`, even when focus is on **Off**. If the path includes `select` and verification is false, reopen the picker and repeat the same request. Netflix can leave old rows in its accessibility tree after dismissing the picker.
+
 ## Batch a known route
 
 Start with a text look to identify full labels. Use `tv_sequence` when the route is known and each later action can be guarded on the TV. Use `to` for a named menu row and `expect` for the state the next step needs. Raw keys are faster for a known transition. Insert a short pause when the UI needs time to settle, then check the destination.

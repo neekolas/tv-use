@@ -267,6 +267,59 @@ def test_native_snapshot_distinguishes_remote_focus_from_selection():
     assert screen_rows(root, 43)["focused"] is None
 
 
+@pytest.mark.parametrize("traits,selected", [(0, False), (2, False), (9, True), (None, None), (True, None), ("8", None)])
+def test_native_selection_trait_independent_of_focus(traits, selected):
+    from atv_bridge_observer.native import OPTIONS, screen_rows
+
+    assert 2004 in OPTIONS["attributes"]
+    attrs = {2001: "English (CC)", 2025: 1, 2094: 0}
+    if traits is not None:
+        attrs[2004] = traits
+    view = screen_rows({"UIAccessibilitySnapshotKeyElement": {"pid": 5, "objectID": 1},
+                        "UIAccessibilitySnapshotKeyAttributes": attrs}, 5)
+    assert view["items"][0]["selected"] is selected and view["focused"] is None
+
+
+@pytest.mark.parametrize("hit,expected", [
+    ({"pid": 5, "objectID": 19}, True),
+    ({"pid": 5, "objectID": 20}, False),
+    ({"pid": 6, "objectID": 19}, False),
+    (None, False),
+])
+async def test_menu_visibility_hit_tests_the_exported_row(hit, expected):
+    from atv_bridge_observer.native import TreeChannel
+
+    tree = TreeChannel(None)
+    tree.read = AsyncMock(return_value=hit)
+    row = {"pid": 5, "uid": "19", "frame": {"x": 100, "y": 40, "width": 40, "height": 10}}
+    assert await tree.hits_row(row) is expected
+    tree.read.assert_awaited_once_with(6, {"point": (120, 45)})
+
+
+@pytest.mark.parametrize("picker_open", [True, False])
+async def test_guarded_picker_read_rejects_background_rows(picker_open):
+    from atv_bridge_observer.accessibility import ScreenReader
+    from atv_bridge_observer.native import screen_rows
+
+    def node(uid, label=None, *children, focused=False):
+        return {
+            "UIAccessibilitySnapshotKeyElement": {"pid": 5, "objectID": uid},
+            "UIAccessibilitySnapshotKeyAttributes": {2001: label, 2025: 1, 2094: focused},
+            "UIAccessibilitySnapshotKeyChildren": children,
+        }
+
+    picker = node(2, None, node(7, None, node(3, "Off", focused=picker_open)), node(4, "English (CC)"))
+    picker["UIAccessibilitySnapshotKeyAttributes"][5003] = "UITableView"
+    root = node(1, "Netflix", picker, node(5, "Open picker", focused=not picker_open))
+    reader = ScreenReader(None, None)
+    reader.tree = AsyncMock()
+    reader.tree.hits_row.return_value = True
+    reader.displayed_screen = AsyncMock(return_value=screen_rows(root, 5))
+    screen = await reader.observe(100, "English (CC)")
+    english = next(row for row in screen["items"] if row["label"] == "English (CC)")
+    assert english["on_screen"] is picker_open
+
+
 def test_native_channel_encodes_only_observation_requests():
     from atv_bridge_observer.ax_archive import decode, request
 

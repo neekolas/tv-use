@@ -317,7 +317,7 @@ class Observer:
             await self.cancel_open()
             await self.tunnel.aclose()
 
-    async def _read_ax_once(self, method, maximum):
+    async def _read_ax_once(self, method, maximum, menu_label):
         rsd = await self.open_tunnel()
         services = rsd.peer_info.get("Services", {})
         if self.audit is None and (
@@ -331,7 +331,7 @@ class Observer:
             self.reader = accessibility.ScreenReader(self.audit, rsd)
             await self.reader.start()
             logging.info("Started passive screen reader")
-        screen = await self.reader.observe(maximum)
+        screen = await self.reader.observe(maximum, menu_label)
         if method == "ax_items":
             return screen
         return {"focused": screen["focused"], "app": screen["app"]}
@@ -351,13 +351,13 @@ class Observer:
         try:
             async with asyncio.timeout(timeout):
                 try:
-                    return await self._read_ax_once(method, maximum)
+                    return await self._read_ax_once(method, maximum, req.get("menu_label"))
                 except TimeoutError:
                     raise
                 except Exception:  # noqa: BLE001 - Rebuild the observation channels once.
                     logging.exception("AX request %s failed. Reopening the tunnel.", method)
                     await self.close_channels()
-                    return await self._read_ax_once(method, maximum)
+                    return await self._read_ax_once(method, maximum, req.get("menu_label"))
         except BaseException:
             await self.close_channels()
             raise

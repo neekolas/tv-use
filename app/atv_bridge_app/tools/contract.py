@@ -189,7 +189,10 @@ SCHEMAS = {
         "to": described(TEXT, "Accessible label to focus. Matching accepts case-insensitive prefixes."),
         "within": described(TEXT, "Prefer matching items in this accessibility container if available."),
         "select": described(BOOL, "Press Select once the target has focus.", default=False),
-    }, ["to"]),
+        "ensure_selected": described(BOOL, "Ensure one exact visible menu option has its selected trait. Skip an already selected option.", default=False),
+    }, ["to"], **{"not": {"required": ["select", "ensure_selected"],
+                          "properties": {"select": described({"const": True}, "Activate the focused row."),
+                                         "ensure_selected": described({"const": True}, "Verify the selected option.")}}}),
     "tv_remote": schema(
         {
             "keys": described({"type": "array", "minItems": 1, "maxItems": 50, "items": {"enum": list(KEYS)}}, KEYS_HELP),

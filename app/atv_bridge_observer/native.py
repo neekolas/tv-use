@@ -12,10 +12,10 @@ from .ax_archive import decode, request
 
 SERVICE = "com.apple.accessibility.axAuditDaemon.remoteAXService"
 log = logging.getLogger(__name__)
-# AXRuntime kAXXCAttributeLabel, Frame, Identifier, Value, IsVisible,
+# AXRuntime kAXXCAttributeLabel, Frame, Traits, Identifier, Value, IsVisible,
 # HasNativeFocus, ElementClassName, and ApplicationBundleIdentifier.
 OPTIONS = {
-    "attributes": [2001, 2003, 5019, 2006, 2025, 2094, 5003, 3003],
+    "attributes": [2001, 2003, 2004, 5019, 2006, 2025, 2094, 5003, 3003],
     "maxDepth": 40,
     "maxChildren": 256,
     "maxArrayCount": 256,
@@ -111,6 +111,19 @@ class TreeChannel:
         hit = await self.read(6, {"point": point})
         return hit.get("pid") if isinstance(hit, dict) else None
 
+    async def hits_row(self, row):
+        frame = row.get("frame")
+        if not isinstance(frame, dict) or not all(
+            isinstance(frame.get(key), (float, int)) for key in ("x", "y", "width", "height")
+        ) or frame["width"] <= 0 or frame["height"] <= 0:
+            return False
+        point = (frame["x"] + frame["width"] / 2, frame["y"] + frame["height"] / 2)
+        try:
+            hit = await self.read(6, {"point": point})
+        except NoDisplayElement:
+            return False
+        return isinstance(hit, dict) and hit.get("pid") == row["pid"] and str(hit.get("objectID")) == row["uid"]
+
     async def snapshot(self, pid):
         if not self.dtx:
             await self.start()
@@ -133,34 +146,43 @@ class TreeChannel:
 
 def screen_rows(root, pid):
     application = root.get("UIAccessibilitySnapshotKeyAttributes") or {}
-    pending = [root]
+    pending = [(root, None, None)]
     visited = set()
     rows = {}
     focused = []
     while pending:
-        node = pending.pop()
+        node, parent_id, list_id = pending.pop()
         if not isinstance(node, dict) or id(node) in visited:
             continue
         visited.add(id(node))
         if len(visited) > 4096:
             raise ValueError("Native accessibility snapshot exceeded the node limit")
-        pending.extend(reversed(node.get("UIAccessibilitySnapshotKeyChildren") or []))
         attrs = node.get("UIAccessibilitySnapshotKeyAttributes") or {}
         token = node.get("UIAccessibilitySnapshotKeyElement") or {}
+        object_id = token.get("objectID")
+        # Netflix can retain a whole table behind the player. Track the owning
+        # list across per-cell wrappers, or the immediate parent for plain menus.
+        child_list = object_id if attrs.get(5003) in ("UITableView", "UICollectionView", "UIPickerView") else list_id
+        child_parent = object_id if node is not root else None
+        children = node.get("UIAccessibilitySnapshotKeyChildren") or []
+        pending.extend((child, child_parent, child_list) for child in reversed(children))
         name = attrs.get(2001)
         if not isinstance(name, str) or not name.strip() or token.get("pid") != pid:
             continue
         uid = str(token["objectID"])
+        traits = attrs.get(2004)
         row = {
             "uid": uid,
             "label": name,
             "caption": name,
             "pid": pid,
             "frame": attrs.get(2003),
+            "selected": bool(traits & 8) if type(traits) is int and traits >= 0 else None,  # UIAccessibilityTraitSelected
             "value": attrs.get(2006),
             "bundle_id": attrs.get(3003) or application.get(3003),
             "app_name": application.get(2001),
             "source": "native_ax_snapshot",
+            "picker_container": list_id if list_id is not None else parent_id,
         }
         if attrs.get(2094) == 1:
             focused.append(row)

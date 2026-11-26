@@ -197,6 +197,19 @@ These runs used a person pressing the real remote on November 20, 2026.
 
 The stream needs the DEBUG flag (PAYLOAD|DEBUG, 0x24) for the touch lines. With the backboardd pid filter it carried about 65 lines per second while a finger touched the pad and almost nothing otherwise.
 
+## Other signals in the remote captures
+
+The saved tvOS 26.6.1 captures also recorded events that can explain a missed press or a frozen mirror.
+
+| Process | Observed signal | What it can establish |
+| --- | --- | --- |
+| `backboardd` | All 40 `SendHIDEvent` delivery records from the controlled mirror run named `TVAirPlay`. The physical-remote capture also contained deliveries to `PineBoard`. | Which process received input. Whether it acted requires a separate observation. |
+| `TVSystemUIService` | A banner moved through presentation, dismissal and timeout. | When a system banner appeared and disappeared. |
+| `TVAirPlay` | Receiver-side audio underruns and video frame-processing errors. | Whether the receiver encountered playback problems while the sender was transmitting. |
+| `PineBoard` | A configured 3840 × 2160, 59.94 Hz HDR10 display mode, Atmos preference and hardware flags, and mute state. | Display and audio configuration. The observed output supplied no numeric volume. |
+
+The production button watcher filters for `backboardd`. The other signals came from broader captures. Their availability on tvOS 27.2 still needs verification.
+
 ## Hardware results
 
 Run on 2026-11-20. The Verdict holds the usage values and the limits.

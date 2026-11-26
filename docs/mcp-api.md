@@ -98,7 +98,7 @@ The history is private household data. It is stored only on the Home Assistant h
 
 ### tv_look
 
-`{}` reads accessibility without waking the TV. `data.items` contains up to 100 accessible items with `label`, `role`, `value` and `focused`. A text-only read can fail on an empty screen or without screen pairing.
+`{}` reads accessibility without waking the TV. `data.items` contains up to 100 accessible items with `label`, `role`, `value`, `focused` and `selected`. A row can be selected while another row has focus. `selected` is true when the app reports the selected accessibility trait, false when its reported traits omit that bit, and null when the traits are unavailable. Ordinary buttons can also report false. Some apps keep offscreen rows in their accessibility tree. A text-only read can fail on an empty screen or without screen pairing.
 
 `{"image":true,"max_width":1280}` adds a PNG as a separate MCP image. Width defaults to 1280 and accepts integers from 1 to 4096. The result includes `data.captured_at` and `data.toast_visible`. tvOS displays a screenshot toast. Protected video can appear black. Image mode can still succeed if labels are missing.
 
@@ -257,6 +257,8 @@ Success returns `data.app`. Search adds `data.path` with the search method. Menu
 ### tv_navigate
 
 `{"to":"Remotes and Devices","select":true}` moves focus to an accessible label, then selects it. Omit `select` or set it false to focus only. Optional `within` is a container hint. Matching ignores case and allows prefixes. Prefer the full label from a recent look. Navigation stops at 40 presses including Select, or after three direction presses leave focus unchanged. Inspect `data.path`, `screen.focus` and `verified`. A changed setting value on the same row can verify a selection.
+
+For a picker that exposes checkmarks, use `{"to":"English (CC)","ensure_selected":true}`. Focus must be in the picker. The bridge checks that the option belongs to the focused list or menu container, checks which element is displayed at its center, and requires one exact label (case and whitespace normalized). If supplied, `within` requires a matching container. An already checked row returns `verified: true` and an empty `data.path` even when another row has focus. Otherwise the bridge brings the option into focus, checks its identity and state again, and presses Select once. Only a fresh checkmark on the same row verifies the change. If the picker closes, inspect the path, reopen the picker and repeat the request to confirm. An ambiguous, unreadable or truncated picker prevents activation. Choose either `ensure_selected: true` or `select: true`.
 
 ### tv_seek
 

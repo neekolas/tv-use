@@ -44,7 +44,7 @@ class ScreenReader:
                 partial = screen
         return partial or {"app": None, "items": [], "focused": None}
 
-    async def observe(self, maximum):
+    async def observe(self, maximum, menu_label=None):
         if self.tree:
             screen = await self.displayed_screen()
             app, items, focus = screen["app"], screen["items"], screen["focused"]
@@ -61,6 +61,17 @@ class ScreenReader:
         limited = items[:maximum]
         if focus and all(item["uid"] != focus["uid"] for item in limited):
             limited = [*limited[: maximum - 1], focus]
+        if menu_label and self.tree and len(items) <= maximum:
+            wanted = " ".join(menu_label.casefold().split())
+            matches = [row for row in limited if " ".join(row["label"].casefold().split()) == wanted]
+            if len(matches) == 1:
+                row = matches[0]
+                container = row.get("picker_container")
+                same_picker = focus and focus.get("pid") == row["pid"] and (
+                    focus.get("uid") == row["uid"]
+                    or (container is not None and container == focus.get("picker_container"))
+                )
+                row["on_screen"] = bool(same_picker and await self.tree.hits_row(row))
         return {"app": app, "items": limited, "focused": focus, "truncated": len(items) > maximum}
 
 
